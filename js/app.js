@@ -81,7 +81,7 @@ function applyTheme(t) {
   if (t === 'system') document.documentElement.removeAttribute('data-theme');
   else document.documentElement.setAttribute('data-theme', t);
   const light = t === 'light' || (t === 'system' && matchMedia('(prefers-color-scheme: light)').matches);
-  document.querySelector('meta[name="theme-color"]').setAttribute('content', light ? '#f6f6f4' : '#0b0b0c');
+  document.querySelector('meta[name="theme-color"]').setAttribute('content', light ? '#f2f2f7' : '#000000');
 }
 
 // ── time progress (day / week / year) ──────────────────────────────────
@@ -498,38 +498,68 @@ async function viewNow() {
   else if (nudge) hint = `<div class="hint-card"><span class="dot"></span><span class="t"><b>${esc(nudge.text)}</b></span>${nudge.href ? `<a class="btn small" href="${esc(nudge.href)}">${esc(nudge.cta)}</a>` : `<button type="button" class="btn small" data-action="${nudge.action}"${nudge.id ? ` data-id="${nudge.id}"` : ''}>${esc(nudge.cta)}</button>`}<button type="button" class="icon-btn sm" data-action="nudge-dismiss" data-key="${esc(nudge.key)}" aria-label="Hide for today">×</button></div>`;
 
   const habitsDone = habits.filter((h) => (h.data.log || {})[t]).length;
+  const setUp = !!(await google.clientId());
+  const roomTile = (room) => {
+    const late = roomReminders(room).filter((x) => x.days < 0).length;
+    const [f1] = roomFact(room);
+    const urgent = roomReminders(room).find((x) => x.days <= 14);
+    return `<a class="tile" href="#/room/${room.id}" style="--c:${room.color}">
+      <span class="tile-head"><span class="tile-ico">${icon(room.icon || 'life', 16)}</span>${late ? `<span class="tile-badge">${late}</span>` : ''}</span>
+      <span class="tile-big" style="font-size:20px">${esc(room.name)}</span>
+      <span class="tile-fact ${urgent && urgent.days < 0 ? 'alert' : ''}">${esc(f1)}</span>
+    </a>`;
+  };
   return `<header class="top home-top">
     <div class="home-row"><div class="kicker">${esc(now.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' }))}</div><a class="icon-btn" href="#/settings" aria-label="Settings">${icon('gear', 20)}</a></div>
     <h1>${headline}</h1>
   </header>
   <form class="capture" data-form="capture" role="search">
-    <input name="q" type="text" placeholder="Add, find or ask anything…" aria-label="Add, find or ask anything" autocomplete="off">
+    ${icon('search', 16)}<input name="q" type="text" placeholder="Add, find or ask anything" aria-label="Add, find or ask anything" autocomplete="off">
     <button type="button" class="mic" data-action="record" aria-label="Speak">${icon('mic', 18)}</button>
   </form>
   <div id="capture-results" class="capture-results" hidden></div>
   ${hint}
-  <div class="grid-2">
-    <section class="block" aria-label="Today">
-      ${items.length ? `<ul class="tl">${items.map((i) => i.html).join('')}</ul>` : '<p class="muted">Nothing on today. Add a task above.</p>'}
+  <div class="bento">
+    <section class="tile span2 tall" aria-label="Today" style="--c:#007AFF;cursor:default">
+      <span class="tile-head"><span class="tile-ico">${icon('check', 16)}</span><span class="tile-name">Today</span><span class="small muted">${left ? `${left} left` : 'All clear'}${lateN ? ` · <b style="color:var(--danger)">${lateN} late</b>` : ''}</span></span>
+      ${items.length ? `<ul class="tl">${items.slice(0, 6).map((i) => i.html).join('')}</ul>` : '<p class="muted small">Nothing due. Enjoy the day.</p>'}
+      ${inlineAdd(MODULE.tasks)}
     </section>
-    <div>
-      ${await calendarCard(cal, t)}
-      <section class="block" aria-label="Habits">
-        <div class="label-row"><span class="label">Habits</span>${habits.length ? `<span class="small muted">${habitsDone} of ${habits.length}</span>` : ''}</div>
-        ${habits.length ? `<div class="habit-grid">${habits.map((h) => {
-          const on = !!(h.data.log || {})[t];
-          const st = streak(h.data.log || {});
-          return `<button type="button" class="habit-btn ${on ? 'on' : ''}" data-action="habit" data-id="${h.id}" aria-pressed="${on}"><b>${esc(h.data.name)}</b><span>${st ? plural(st, 'day') : '–'}</span></button>`;
-        }).join('')}</div>` : '<p class="muted">Pick 3–5 habits to keep. <a class="link" href="#/new/habits">Add one</a></p>'}
-      </section>
-      <section class="block" aria-label="Mood">
-        <span class="label">How's today?</span>
-        <div class="mood" role="group" aria-label="Mood today">${[1, 2, 3, 4, 5].map((n) => `<button type="button" data-action="mood" data-v="${n}" class="${mood === n ? 'on' : ''}" aria-pressed="${mood === n}">${n}</button>`).join('')}</div>
-      </section>
-      ${coming.length ? `<section class="block" aria-label="Coming up"><span class="label">Coming up</span><ul class="simple">${coming.map((c) => c.html).join('')}</ul></section>` : ''}
-    </div>
+    <section class="tile span2 cal-tile" style="--c:#FF3B30;cursor:default;min-height:0">${await calendarCard(cal, t)}</section>
+    <section class="tile" aria-label="Habits" style="--c:#34C759;cursor:default">
+      <span class="tile-head"><span class="tile-ico">${icon('track', 16)}</span><span class="tile-name">Habits</span><span class="small muted">${habits.length ? `${habitsDone}/${habits.length}` : ''}</span></span>
+      ${habits.length ? `<div class="tile-rings">${habits.slice(0, 6).map((h) => {
+        const on = !!(h.data.log || {})[t];
+        const st = streak(h.data.log || {});
+        return `<button type="button" class="ring-btn ${on ? 'on' : ''}" data-action="habit" data-id="${h.id}" aria-pressed="${on}" aria-label="${esc(h.data.name)}"><i>${st || '·'}</i><span>${esc(h.data.name)}</span></button>`;
+      }).join('')}</div>` : `<a class="tile-fact" href="#/m/habits" style="margin-top:auto">Add 3–5 habits to track daily</a>`}
+    </section>
+    <section class="tile" aria-label="Mood" style="--c:#FF2D55;cursor:default">
+      <span class="tile-head"><span class="tile-ico">${icon('health', 16)}</span><span class="tile-name">How's today?</span></span>
+      <div class="mood" role="group" aria-label="Mood today">${[1, 2, 3, 4, 5].map((n) => `<button type="button" data-action="mood" data-v="${n}" class="${mood === n ? 'on' : ''}" aria-pressed="${mood === n}">${n}</button>`).join('')}</div>
+    </section>
+    ${coming.length ? `<section class="tile span2" aria-label="Coming up" style="--c:#FF9500;min-height:0;cursor:default">
+      <span class="tile-head"><span class="tile-ico">${icon('now', 16)}</span><span class="tile-name">Coming up</span></span>
+      <ul class="simple">${coming.slice(0, 3).map((c) => c.html).join('')}</ul>
+    </section>` : ''}
+    ${ROOMS.map(roomTile).join('')}
+    <a class="tile" href="#/plan" style="--c:#5856D6">
+      <span class="tile-head"><span class="tile-ico">${icon('plan', 16)}</span><span class="tile-name">Plan</span></span>
+      <span class="tile-big" style="font-size:20px">${db.list('goals').filter((g) => g.data.horizon === 'week' && g.data.status !== 'dropped' && g.data.status !== 'achieved').length || 'No'} weekly goals</span>
+      <span class="tile-fact">Goals, reviews, decisions</span>
+    </a>
+    <a class="tile" href="#/journal" style="--c:#AF52DE">
+      <span class="tile-head"><span class="tile-ico">${icon('mic', 16)}</span><span class="tile-name">Journal</span></span>
+      <span class="tile-big" style="font-size:20px">${journaledToday ? 'Written today' : 'Speak or write'}</span>
+      <span class="tile-fact">${plural(db.list('journal').length, 'entry').replace('entrys', 'entries')}</span>
+    </a>
   </div>
-  ${lifeHtml()}`;
+  <ul class="simple more-list">
+    <li><a href="#/setup"><span class="l"><span>Set up guide</span></span><span class="r">${SETUP.filter(setupDone).length}/${SETUP.length}</span></a></li>
+    <li><a href="#/progress"><span class="l"><span>Progress & streaks</span></span><span class="r">›</span></a></li>
+    <li><a href="#/journal"><span class="l"><span>Journal</span></span><span class="r">›</span></a></li>
+    <li><a href="#/settings"><span class="l"><span>Settings</span></span><span class="r">›</span></a></li>
+  </ul>`;
 }
 
 // ── suggestions: small nudges based on what's in the app ───────────────
