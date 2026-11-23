@@ -8,6 +8,7 @@ import * as db from './db.js';
 export const SCOPES = {
   gmail: 'https://www.googleapis.com/auth/gmail.readonly',
   calendar: 'https://www.googleapis.com/auth/calendar.events',
+  drive: 'https://www.googleapis.com/auth/drive.metadata.readonly',
 };
 
 const KEY = 'google-token';

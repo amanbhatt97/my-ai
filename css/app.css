@@ -444,3 +444,17 @@ button.cd:hover { border-color: var(--text-2); }
 .home-row .kicker { margin: 0; }
 .section-title { margin: 8px 0 14px; font: 600 24px/1.2 var(--display); letter-spacing: -0.01em; }
 #life { scroll-margin-top: 16px; }
+
+/* drive import */
+.drive-list { list-style: none; margin: 16px 0 0; padding: 0; }
+.drive-list li { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.dl-check input { width: 22px; height: 22px; accent-color: var(--accent); }
+.dl-body { flex: 1; min-width: 140px; display: flex; flex-direction: column; gap: 2px; }
+.dl-body .small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.seg { display: inline-flex; padding: 3px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line-2); }
+.seg label { position: relative; }
+.seg input { position: absolute; opacity: 0; pointer-events: none; }
+.seg span { display: inline-flex; align-items: center; min-height: 34px; padding: 0 12px; border-radius: 9px; font-size: 13px; color: var(--muted); cursor: pointer; }
+.seg input:checked + span { background: var(--text); color: var(--bg); font-weight: 600; }
+.seg input:focus-visible + span { outline: 2px solid var(--accent-text); outline-offset: 2px; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }

@@ -11,7 +11,7 @@ export const ROOMS = [
   { id: 'people', name: 'People', color: '#F5B65C', modules: ['people', 'favours'] },
   { id: 'home', name: 'Home & things', color: '#B08CFF', modules: ['vehicles', 'documents', 'possessions', 'home', 'maintenance', 'contacts'] },
   { id: 'learning', name: 'Learning', color: '#5CC8F5', modules: ['books', 'courses', 'skills', 'notes'] },
-  { id: 'travel', name: 'Travel', color: '#FF9F5C', modules: ['trips', 'travelwish', 'traveldocs'] },
+  { id: 'travel', name: 'Travel', color: '#FF9F5C', modules: ['trips', 'travelwish', 'traveldocs'], extra: [{ name: 'Import from Google Drive', href: '#/drive-travel' }] },
   { id: 'me', name: 'Me', color: '#C8FF4D', modules: ['journal', 'links', 'days', 'profiles', 'projects', 'ideas', 'milestones', 'wishlist', 'bucket'] },
 ];
 

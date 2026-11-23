@@ -3,6 +3,7 @@ import * as sync from './sync.js';
 import { Recorder, saveRecording, transcribe, retryPending, localStamp } from './journal.js';
 import * as gmail from './gmail.js';
 import * as gcal from './gcal.js';
+import * as drive from './drive.js';
 import * as google from './google.js';
 import { ROOMS, ROOM, PLAN_MODULES, roomOf, colorOf, homeOf } from './rooms.js';
 import { MODULES, MODULE, GROUPS, LINK_CATEGORIES, titleOf, defaults, isDone } from './schemas.js';
@@ -178,7 +179,7 @@ const go = (hash) => { location.hash = hash; };
 const VIEWS = {
   now: viewNow, plan: viewPlan, journal: viewJournal, life: viewLife,
   m: viewModule, new: viewNew, r: viewRecord, search: viewSearch, settings: viewSettings, trash: viewTrash,
-  links: viewLinks, setup: viewSetup, progress: viewProgress, inbox: viewInbox, t: viewLife, room: viewRoom, review: viewReview,
+  links: viewLinks, setup: viewSetup, progress: viewProgress, inbox: viewInbox, t: viewLife, room: viewRoom, review: viewReview, 'drive-travel': viewDriveTravel,
 };
 
 async function render() {
@@ -237,6 +238,7 @@ function backFor(route) {
   if (name === 'room') return { name: 'Home', href: '#/now' };
   if (name === 'journal' || name === 'links') return { name: 'Me', href: '#/room/me' };
   if (name === 'inbox') return { name: 'Career', href: '#/room/career' };
+  if (name === 'drive-travel') return { name: 'Travel', href: '#/room/travel' };
   if (name === 'progress' || name === 'review') return { name: 'Plan', href: '#/plan' };
   if (['settings', 'setup', 'trash'].includes(name)) return { name: 'Home', href: '#/now' };
   return null;
@@ -651,6 +653,36 @@ async function viewInbox() {
     </div>
     <div class="form-actions"><button class="btn primary" type="submit">${s.kind === 'update' ? 'Update job' : 'Add to Jobs'}</button><button class="btn ghost" type="button" data-action="gmail-ignore" data-msg="${esc(s.msgId)}">Ignore</button></div>
   </form>`).join('') : `<div class="empty"><p>No suggestions waiting.</p></div>`}`;
+}
+
+// ── DRIVE → TRAVEL ──────────────────────────────────────────────────────
+let driveFound = [];
+async function viewDriveTravel() {
+  const ds = await drive.settings();
+  const setUp = !!(await google.clientId());
+  const fresh = driveFound.filter((p) => !drive.existing(p));
+  const already = driveFound.length - fresh.length;
+  return `${header('Import from Drive', { kicker: 'Travel' })}
+  <p class="lead">Reads the folder names inside <b>${esc(ds.folder)}</b> in your Google Drive (names only, never file contents). A destination with a passport, visa, ticket, boarding pass or booking inside is marked travelled. Tap to switch any place before adding.</p>
+  <form class="form" data-form="drive-folder">
+    <div class="field"><label for="dv-folder">Folder name in Drive</label><input id="dv-folder" name="folder" value="${esc(ds.folder)}"></div>
+  </form>
+  <button type="button" class="btn primary wide" data-action="drive-scan" ${setUp ? '' : 'disabled'}>Scan Drive</button>
+  <p class="small muted" id="drive-status">${setUp ? (driveFound.length ? `${plural(driveFound.length, 'destination')} found${already ? ` · ${already} already in Travel` : ''}` : '') : 'Add your Google client ID in Settings first.'}</p>
+  ${fresh.length ? `<form data-form="drive-import">
+    <ul class="drive-list">${fresh.map((p, i) => `<li>
+      <label class="dl-check"><input type="checkbox" name="pick" value="${i}" checked><span class="sr">Include ${esc(p.place)}</span></label>
+      <div class="dl-body">
+        <b>${esc(p.place)}</b>
+        <span class="small muted">${p.files} file${p.files === 1 ? '' : 's'}${p.evidence.length ? ` · ${esc(p.evidence.slice(0, 2).join(', '))}` : ' · no tickets or visa'}</span>
+      </div>
+      <div class="seg" role="radiogroup" aria-label="${esc(p.place)}">
+        <label><input type="radio" name="t${i}" value="1" ${p.travelled ? 'checked' : ''}><span>Travelled</span></label>
+        <label><input type="radio" name="t${i}" value="0" ${p.travelled ? '' : 'checked'}><span>Not yet</span></label>
+      </div>
+    </li>`).join('')}</ul>
+    <div class="action-bar"><button class="btn primary" type="submit">Add ${plural(fresh.length, 'place')}</button></div>
+  </form>` : ''}`;
 }
 
 // ── GUIDED WEEKLY REVIEW ────────────────────────────────────────────────
@@ -1140,7 +1172,9 @@ async function viewRecord(id, tab = 'view') {
     <a class="btn" href="#/r/${id}/edit">Edit</a>
     ${r.module === 'tasks' && !done ? `<button type="button" class="btn primary" data-action="set-status" data-id="${id}" data-v="done">Mark done</button>`
       : doneToggle ? `<button type="button" class="btn ${done ? '' : 'primary'}" data-action="toggle-done" data-id="${id}" data-k="${doneToggle.k}">${done ? 'Mark not done' : `Mark ${doneToggle.label.toLowerCase()}`}</button>`
-      : isJournal ? '<button type="button" class="btn primary" data-action="record">New entry</button>' : ''}
+      : isJournal ? '<button type="button" class="btn primary" data-action="record">New entry</button>'
+      : r.module === 'travelwish' ? `<button type="button" class="btn primary" data-action="toggle-travelled" data-id="${id}">Mark travelled</button>`
+      : r.module === 'trips' ? `<button type="button" class="btn" data-action="toggle-travelled" data-id="${id}">Not travelled yet</button>` : ''}
   </div>`}`;
 }
 
@@ -1630,6 +1664,22 @@ document.addEventListener('click', async (e) => {
       location.hash = `#/r/${dst}`;
       break;
     }
+    case 'drive-scan': {
+      const st = $('#drive-status');
+      if (st) st.textContent = 'Reading your Drive…';
+      try {
+        const f = document.querySelector('#dv-folder');
+        if (f && f.value.trim()) await db.kvSet('drive', { folder: f.value.trim() });
+        driveFound = await drive.scan();
+      } catch (err) { toast(err.message || 'Drive scan failed'); }
+      render();
+      break;
+    }
+    case 'toggle-travelled': {
+      const rec = await drive.toggleTravelled(id);
+      if (rec) { toast(rec.module === 'trips' ? 'Moved to Trips · travelled' : 'Moved to Places to go'); location.hash = `#/r/${rec.id}`; }
+      break;
+    }
     case 'gmail-ignore': await gmail.ignore(el.dataset.msg); render(); break;
     case 'gmail-reset': await gmail.resetScan(); toast('Next scan starts from scratch.'); break;
     case 'starter-links': {
@@ -1730,6 +1780,20 @@ document.addEventListener('submit', async (e) => {
       // "?something" or a match in your data → search; otherwise add it
       if (q.startsWith('?')) { location.hash = '#/search'; setTimeout(() => { const i = $('#global-q'); if (i) { i.value = q.slice(1).trim(); i.dispatchEvent(new Event('input', { bubbles: true })); } }, 60); return; }
       openQuickAdd('tasks', q);
+    } else if (kind === 'drive-import') {
+      const fresh = driveFound.filter((p) => !drive.existing(p));
+      const picks = [...form.querySelectorAll('input[name=pick]:checked')].map((x) => Number(x.value));
+      let t = 0; let w = 0;
+      for (const i of picks) {
+        const travelled = form.querySelector(`input[name=t${i}]:checked`)?.value === '1';
+        await drive.importPlace(fresh[i], travelled);
+        if (travelled) t++; else w++;
+      }
+      toast(`Added ${t} trip${t === 1 ? '' : 's'} and ${w} place${w === 1 ? '' : 's'} to go`);
+      location.hash = '#/room/travel';
+    } else if (kind === 'drive-folder') {
+      await db.kvSet('drive', { folder: form.elements.folder.value.trim() || 'Foreign Destinations' });
+      toast('Saved');
     } else if (kind === 'review') {
       const fd = new FormData(form);
       const next = String(fd.get('next') || '').split('\n').map((x) => x.replace(/^[-*\d.\s]+/, '').trim()).filter(Boolean).slice(0, 5);
@@ -1822,7 +1886,7 @@ let renderQueued = false;
 function queueRender(info) {
   // don't wipe a form the user is typing in
   if (formDirty) return;
-  if (['settings', 'new', 'search', 'inbox', 'review'].includes(currentRoute.name)) return;
+  if (['settings', 'new', 'search', 'inbox', 'review', 'drive-travel'].includes(currentRoute.name)) return;
   if (currentRoute.name === 'r' && info?.rec && info.rec.id !== currentRoute.parts[0]) return;
   if (renderQueued) return;
   renderQueued = true;

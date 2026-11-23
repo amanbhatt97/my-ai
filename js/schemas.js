@@ -273,11 +273,11 @@ export const MODULES = [
   // ── Travel ──────────────────────────────────────────────────────────
   {
     id: 'trips', name: 'Trips', group: 'Travel', title: 'place', sort: 'from',
-    fields: [f('place', 'Place', 'text', { req: true }), f('country', 'Country', 'text'), f('from', 'From', 'date', { remind: 7 }), f('to', 'To', 'date'), f('with', 'With', 'tags'), f('cost', 'Total cost', 'money'), f('album', 'Photo album', 'url'), f('highlights', 'Highlights', 'long'), links],
+    fields: [f('place', 'Place', 'text', { req: true }), f('country', 'Country', 'text'), f('from', 'From', 'date', { remind: 7 }), f('to', 'To', 'date'), f('with', 'With', 'tags'), f('cost', 'Total cost', 'money'), f('album', 'Photo album', 'url'), f('highlights', 'Highlights', 'long'), links, f('driveId', 'Drive folder id', 'text', { hidden: true })],
   },
   {
     id: 'travelwish', name: 'Places to go', group: 'Travel', title: 'place',
-    fields: [f('place', 'Place', 'text', { req: true }), f('when', 'Ideal time', 'text'), f('budget', 'Budget', 'money'), notes],
+    fields: [f('place', 'Place', 'text', { req: true }), f('when', 'Ideal time', 'text'), f('budget', 'Budget', 'money'), f('folder', 'Drive folder', 'url'), notes, f('driveId', 'Drive folder id', 'text', { hidden: true })],
   },
   {
     id: 'traveldocs', name: 'Visas & travel IDs', group: 'Travel', title: 'name',
