@@ -1546,6 +1546,8 @@ async function viewSettings() {
       <div class="field check"><input id="g-ai" name="ai" type="checkbox" ${gm.ai ? 'checked' : ''}><label for="g-ai">Use AI through my Worker for better company and role detection (sends sender, subject and preview of matching emails)</label></div>
       <div class="form-actions"><button class="btn primary" type="submit">Save</button><button class="btn ghost" type="button" data-action="gmail-reset">Rescan from scratch</button></div>
     </form>
+    <p class="small muted">If the Google popup doesn't open (for example in the iPhone home-screen app), the app switches to Google's sign-in page instead. For that, add this exact address under <b>Authorized redirect URIs</b> in your Google OAuth client:</p>
+    <p class="redirect-uri"><code>${esc(google.redirectUri())}</code> <button type="button" class="link" data-action="copy-redirect">Copy</button></p>
   </section>
 
   <section class="block">
@@ -1831,6 +1833,7 @@ document.addEventListener('click', async (e) => {
       break;
     }
     case 'gmail-scan': {
+      try { await google.signIn(google.SCOPES.gmail); } catch (err) { toast(err.message); break; }
       const gm = (await db.kvGet('gmail')) || {};
       if (!gm.clientId) { toast('Add your Google client ID in Settings first.'); go('#/settings'); break; }
       el.disabled = true;
@@ -1919,6 +1922,7 @@ document.addEventListener('click', async (e) => {
       break;
     }
     case 'drive-scan': {
+      try { await google.signIn(google.SCOPES.drive); } catch (err) { toast(err.message); break; }
       const st = $('#drive-status');
       if (st) st.textContent = 'Reading your Drive…';
       try {
@@ -1971,6 +1975,9 @@ document.addEventListener('click', async (e) => {
       render();
       break;
     }
+    case 'copy-redirect':
+      try { await navigator.clipboard.writeText(google.redirectUri()); toast('Copied'); } catch { toast(google.redirectUri()); }
+      break;
     case 'gmail-ignore': await gmail.ignore(el.dataset.msg); render(); break;
     case 'gmail-reset': await gmail.resetScan(); toast('Next scan starts from scratch.'); break;
     case 'starter-links': {
@@ -2138,7 +2145,8 @@ document.addEventListener('submit', async (e) => {
       const rec = await db.create(id, data);
       closeSheet();
       if (id === 'tasks' && form.elements.toCal?.checked) {
-        try { await google.signIn(google.SCOPES.calendar); await gcal.addTaskEvent(rec.id); } catch (err) { toast(err.message || 'Calendar failed'); }
+        if (!google.hasToken(google.SCOPES.calendar)) toast('Task saved. Tap Connect Google on Home, then use "Add to Calendar".');
+        else { try { await gcal.addTaskEvent(rec.id); } catch (err) { toast(err.message || 'Calendar failed'); } }
       }
       toast(id === 'tasks' && data.due ? `Task added · due ${rel(diffDays(parseDay(data.due), startOfToday()))}` : `Added to ${m.name}`, { undo: true });
       if (!['tasks', 'journal', 'ideas'].includes(id)) go(`#/r/${rec.id}`);
@@ -2163,6 +2171,7 @@ document.addEventListener('submit', async (e) => {
     } else if (kind === 'gmail') {
       const fd = new FormData(form);
       await db.kvSet('gmail', { clientId: String(fd.get('clientId') || '').trim(), firstDays: Number(fd.get('firstDays')) || 90, ai: form.elements.ai.checked });
+      await google.prepare();
       toast('Saved');
     } else if (kind === 'device') {
       await db.kvSet('device', String(new FormData(form).get('device') || 'Device').trim());
@@ -2205,9 +2214,11 @@ function queueRender(info) {
 }
 
 async function boot() {
+  google.consumeRedirect(); // back from Google's sign-in page
   applyTheme(getTheme());
   matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => applyTheme(getTheme()));
   await db.init();
+  google.prepare(); // load Google sign-in early so the popup can open instantly on tap
   db.onChange((info) => {
     if (info.type !== 'sync') sync.scheduleSync();
     if (info.rec && info.type !== 'sync' && gcal.isEligible(info.rec.module)) gcal.enqueue(info.rec.id).then(() => gcal.flush());

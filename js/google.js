@@ -50,55 +50,99 @@ export async function clientId() {
   return ((await db.kvGet('gmail')) || {}).clientId || '';
 }
 
-// Must be called from a tap/click (browsers block sign-in popups otherwise).
-export async function signIn(scope) {
-  if (hasToken(scope)) return load().token;
-  const id = await clientId();
-  if (!id) throw new Error('Add your Google client ID in Settings first.');
-  await loadGis();
-  const prev = load();
-  const wanted = [...new Set([...(prev?.scopes || []), scope])];
-  return new Promise((resolve, reject) => {
-    const client = window.google.accounts.oauth2.initTokenClient({
-      client_id: id,
-      scope: wanted.join(' '),
+// ── sign-in ─────────────────────────────────────────────────────────────
+// Browsers only allow a popup if it opens *synchronously* inside the tap.
+// So the Google script and client are prepared at app start (prepare()),
+// and signIn() opens the popup with no waiting first. If a popup can't open
+// (blocked, or an iPhone home-screen app), we use a full-page redirect.
+
+let client = null;
+let pending = null;
+let readyId = '';
+
+export async function prepare() {
+  readyId = await clientId();
+  if (!readyId) { client = null; return; }
+  try {
+    await loadGis();
+    client = window.google.accounts.oauth2.initTokenClient({
+      client_id: readyId,
+      scope: SCOPES.calendar,
       include_granted_scopes: true,
-      callback: (resp) => {
+      callback: (resp) => { const p = pending; pending = null; if (p) p.done(resp); },
+      error_callback: (err) => { const p = pending; pending = null; if (p) p.fail(err); },
+    });
+  } catch { client = null; }
+}
+
+const isIosStandalone = () => /iphone|ipad|ipod/i.test(navigator.userAgent) && (navigator.standalone || matchMedia('(display-mode: standalone)').matches);
+export const redirectUri = () => location.origin + location.pathname;
+
+function redirectSignIn(scopes) {
+  try { sessionStorage.setItem('google-return', location.hash || '#/now'); } catch { /* ignore */ }
+  const q = new URLSearchParams({
+    client_id: readyId,
+    redirect_uri: redirectUri(),
+    response_type: 'token',
+    scope: scopes.join(' '),
+    include_granted_scopes: 'true',
+    prompt: '',
+    state: 'life-google',
+  });
+  location.href = `https://accounts.google.com/o/oauth2/v2/auth?${q}`;
+  return new Promise(() => {}); // the page is leaving
+}
+
+// Called at start-up: picks up the token when Google sends us back.
+export function consumeRedirect() {
+  const h = location.hash;
+  if (!h.includes('access_token=')) return false;
+  const params = new URLSearchParams(h.slice(1));
+  if (params.get('state') !== 'life-google') return false;
+  save({
+    token: params.get('access_token'),
+    scopes: (params.get('scope') || '').split(' ').filter(Boolean),
+    expiry: Date.now() + Number(params.get('expires_in') || 3600) * 1000,
+  });
+  let back = '#/now';
+  try { back = sessionStorage.getItem('google-return') || '#/now'; sessionStorage.removeItem('google-return'); } catch { /* ignore */ }
+  history.replaceState(null, '', location.pathname + back);
+  return true;
+}
+
+function request(scopes) {
+  const prev = load();
+  const wanted = [...new Set([...(prev?.scopes || []), ...scopes])];
+  if (isIosStandalone()) return redirectSignIn(wanted);
+  return new Promise((resolve, reject) => {
+    pending = {
+      done: (resp) => {
         if (resp.error) { reject(new Error(resp.error_description || resp.error)); return; }
         const granted = (resp.scope || '').split(' ').filter(Boolean);
-        if (!granted.includes(scope)) { reject(new Error('Permission was not granted.')); return; }
         save({ token: resp.access_token, scopes: granted, expiry: Date.now() + Number(resp.expires_in || 3600) * 1000 });
         resolve(resp.access_token);
       },
-      error_callback: (err) => reject(new Error(err?.message || 'Google sign-in was closed.')),
-    });
-    client.requestAccessToken({ prompt: '' });
+      fail: (err) => {
+        if (err?.type === 'popup_failed_to_open') { redirectSignIn(wanted); return; }
+        reject(new Error(err?.type === 'popup_closed' ? 'Google sign-in was closed.' : (err?.message || 'Google sign-in failed.')));
+      },
+    };
+    client.requestAccessToken({ scope: wanted.join(' '), include_granted_scopes: true, prompt: '' });
   });
 }
 
-// One consent for several features (Gmail, Calendar, Tasks, Drive).
-export async function signInMany(scopes) {
-  if (scopes.every((sc) => hasToken(sc))) return load().token;
-  const id = await clientId();
-  if (!id) throw new Error('Add your Google client ID in Settings first.');
-  await loadGis();
-  const prev = load();
-  const wanted = [...new Set([...(prev?.scopes || []), ...scopes])];
-  return new Promise((resolve, reject) => {
-    const client = window.google.accounts.oauth2.initTokenClient({
-      client_id: id,
-      scope: wanted.join(' '),
-      include_granted_scopes: true,
-      callback: (resp) => {
-        if (resp.error) { reject(new Error(resp.error_description || resp.error)); return; }
-        const granted = (resp.scope || '').split(' ').filter(Boolean);
-        save({ token: resp.access_token, scopes: granted, expiry: Date.now() + Number(resp.expires_in || 3600) * 1000 });
-        resolve(resp.access_token);
-      },
-      error_callback: (err) => reject(new Error(err?.message || 'Google sign-in was closed.')),
-    });
-    client.requestAccessToken({ prompt: '' });
-  });
+// Must be called straight from a tap: no awaits before it in the handler.
+export function signIn(scope) { return signInMany([scope]); }
+
+export function signInMany(scopes) {
+  if (scopes.every((sc) => hasToken(sc))) return Promise.resolve(load().token);
+  if (!readyId) return Promise.reject(new Error('Add your Google client ID in Settings first.'));
+  if (!client) {
+    // script not ready yet (slow network): prepare now, then the user taps again
+    prepare();
+    return Promise.reject(new Error('Google is still loading. Tap again in a second.'));
+  }
+  return request(scopes);
 }
 
 export function signOut() {
