@@ -1,8 +1,8 @@
 // Offline support: the app shell is cached; API calls always go to the network.
-const CACHE = 'life-v2';
+const CACHE = 'life-v3';
 const SHELL = [
   './', './index.html', './css/app.css', './manifest.webmanifest', './icon.svg',
-  './js/app.js', './js/db.js', './js/sync.js', './js/crypto.js', './js/schemas.js', './js/journal.js',
+  './js/app.js', './js/db.js', './js/sync.js', './js/crypto.js', './js/schemas.js', './js/journal.js', './js/gmail.js',
 ];
 
 self.addEventListener('install', (e) => {

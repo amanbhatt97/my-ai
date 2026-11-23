@@ -1,6 +1,7 @@
 import * as db from './db.js';
 import * as sync from './sync.js';
 import { Recorder, saveRecording, transcribe, retryPending, localStamp } from './journal.js';
+import * as gmail from './gmail.js';
 import { MODULES, MODULE, GROUPS, LINK_CATEGORIES, titleOf, defaults, isDone } from './schemas.js';
 
 // ── tiny helpers ────────────────────────────────────────────────────────
@@ -159,7 +160,7 @@ const go = (hash) => { location.hash = hash; };
 const VIEWS = {
   now: viewNow, plan: viewPlan, journal: viewJournal, life: viewLife,
   m: viewModule, new: viewNew, r: viewRecord, search: viewSearch, settings: viewSettings, trash: viewTrash,
-  links: viewLinks, setup: viewSetup, progress: viewProgress,
+  links: viewLinks, setup: viewSetup, progress: viewProgress, inbox: viewInbox,
 };
 
 async function render() {
@@ -228,6 +229,7 @@ async function viewNow() {
   const mood = dayRec?.data.mood;
   const heads = reminders().filter((x) => x.r.module !== 'tasks').slice(0, 8);
   const lastEntry = db.list('journal').sort((a, b) => (b.data.at || '').localeCompare(a.data.at || ''))[0];
+  const mailCount = (await gmail.suggestions()).length;
   const weekGoals = db.list('goals').filter((r) => r.data.horizon === 'week' && r.data.status !== 'dropped');
 
   return `${header('Now', {
@@ -236,6 +238,7 @@ async function viewNow() {
   })}
   <div class="tp" aria-label="Time elapsed">${timeProgress().map(([k, v]) => `<div class="tp-item"><span class="mono">${k.toUpperCase()}</span><span class="tp-bar"><span style="width:${v}%"></span></span><span class="mono">${v}%</span></div>`).join('')}</div>
   ${setupCard()}
+  ${mailCount ? `<a class="setup-card" href="#/inbox"><span class="mono small">GMAIL · ${mailCount}</span><span class="setup-next">Job updates to review</span></a>` : ''}
   ${pinnedLinks()}
   <div class="grid-2">
     <section class="block">
@@ -441,6 +444,30 @@ async function viewProgress() {
   </section>`;
 }
 
+// ── GMAIL INBOX (job suggestions) ───────────────────────────────────────
+async function viewInbox() {
+  const list = await gmail.suggestions();
+  const gm = (await db.kvGet('gmail')) || {};
+  const last = await db.kvGet('gmailLastScan');
+  const statuses = MODULE.jobs.fields.find((x) => x.k === 'status').options;
+  return `${header('From Gmail', { kicker: 'JOB APPLICATIONS', back: '#/m/jobs' })}
+  <section class="block">
+    <button type="button" class="btn primary wide" data-action="gmail-scan">Scan Gmail</button>
+    <p class="small muted" id="scan-status">${gm.clientId ? (last ? `Last scan ${new Date(last).toLocaleString('en-IN')}` : 'Never scanned. The first scan looks back ' + (gm.firstDays || 90) + ' days.') : 'Set up Gmail in Settings first.'}</p>
+  </section>
+  ${list.length ? list.map((s) => `<form class="block mail" data-form="gmail-accept" data-msg="${esc(s.msgId)}">
+    <div class="label-row"><span class="label">${s.kind === 'update' ? 'Status update' : 'New application'} · ${fmtDay(s.date)}</span><a class="link" href="${esc(gmail.mailLink(s.threadId))}" target="_blank" rel="noopener">Open email</a></div>
+    <p class="mail-subj">${esc(s.subject)}</p>
+    <p class="small muted">${esc(s.from)} · ${esc(s.snippet)}</p>
+    <div class="mail-fields">
+      <div class="field"><label for="c-${esc(s.msgId)}">Company</label><input id="c-${esc(s.msgId)}" name="company" value="${esc(s.kind === 'update' && s.jobId && db.get(s.jobId) ? db.get(s.jobId).data.company : s.company)}" ${s.kind === 'update' ? 'readonly' : ''}></div>
+      <div class="field"><label for="r-${esc(s.msgId)}">Role</label><input id="r-${esc(s.msgId)}" name="role" value="${esc(s.kind === 'update' && s.jobId && db.get(s.jobId) ? db.get(s.jobId).data.role || '' : s.role)}" ${s.kind === 'update' ? 'readonly' : ''}></div>
+      <div class="field"><label for="s-${esc(s.msgId)}">Status</label><select id="s-${esc(s.msgId)}" name="status">${statuses.map((o) => `<option ${o === s.status ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select></div>
+    </div>
+    <div class="form-actions"><button class="btn primary" type="submit">${s.kind === 'update' ? 'Update job' : 'Add to Jobs'}</button><button class="btn ghost" type="button" data-action="gmail-ignore" data-msg="${esc(s.msgId)}">Ignore</button></div>
+  </form>`).join('') : `<div class="empty"><p>No suggestions waiting.</p></div>`}`;
+}
+
 // ── SETUP GUIDE ─────────────────────────────────────────────────────────
 async function viewSetup() {
   const done = SETUP.filter(setupDone).length;
@@ -577,7 +604,7 @@ async function viewModule(id, filter = '') {
   const statusField = m.status && m.fields.find((x) => x.k === m.status);
   const counts = {};
   if (statusField) for (const r of db.list(id)) counts[r.data[m.status]] = (counts[r.data[m.status]] || 0) + 1;
-  return `${header(m.name, { kicker: m.group.toUpperCase(), back: '#/life', actions: `<a class="btn primary small" href="#/new/${id}">+ New</a>` })}
+  return `${header(m.name, { kicker: m.group.toUpperCase(), back: '#/life', actions: `${id === 'jobs' ? '<a class="btn ghost small" href="#/inbox">Gmail</a>' : ''}<a class="btn primary small" href="#/new/${id}">+ New</a>` })}
   <div class="toolbar">
     <label class="search-box">${icon('search', 16)}<input type="search" data-filter="${id}" data-status="${esc(filter)}" placeholder="Filter ${esc(m.name.toLowerCase())}" aria-label="Filter"></label>
   </div>
@@ -685,6 +712,7 @@ async function viewRecord(id, tab = 'details') {
   </nav>
   ${tab === 'history' ? `<section class="block" id="history" data-id="${id}"><p class="muted">Loading…</p></section>` : `
   ${isJournal ? journalExtras(r) : ''}
+  ${r.module === 'jobs' && (r.data.emails || []).length ? `<section class="block"><span class="label">Emails</span><ul class="heads">${r.data.emails.slice().sort((a, b) => b.date.localeCompare(a.date)).map((m) => `<li><a href="${esc(gmail.mailLink(m.threadId))}" target="_blank" rel="noopener"><span>${esc(m.subject)}</span><span class="mono small muted">${fmtDay(m.date)}</span></a></li>`).join('')}</ul></section>` : ''}
   <form class="form" data-form="edit" data-id="${id}" data-module="${r.module}">
     ${formFields(m, r.data)}
     <div class="form-actions">
@@ -766,6 +794,7 @@ async function viewSettings() {
   const device = await db.kvGet('device', '');
   const last = await db.kvGet('lastSync');
   const theme = getTheme();
+  const gm = (await db.kvGet('gmail')) || {};
   return `${header('Settings', { back: '#/now' })}
   <section class="block">
     <span class="label">Appearance</span>
@@ -787,6 +816,17 @@ async function viewSettings() {
       <div class="field"><label for="s-pass">Encryption passphrase</label><input id="s-pass" name="passphrase" type="password" required minlength="10" autocomplete="new-password"></div>
       <div class="form-actions"><button class="btn primary wide" type="submit">Connect & sync</button></div>
     </form>`}
+  </section>
+
+  <section class="block">
+    <span class="label">Gmail · job applications</span>
+    <p class="small muted">Read-only. Scans for application confirmations, interview invites, rejections and offers, and suggests updates you accept or ignore. Needs a Google OAuth client ID (see the README).</p>
+    <form class="form" data-form="gmail">
+      <div class="field"><label for="g-client">Google OAuth client ID</label><input id="g-client" name="clientId" value="${esc(gm.clientId || '')}" placeholder="1234-abc.apps.googleusercontent.com" autocomplete="off"></div>
+      <div class="field"><label for="g-days">First scan looks back (days)</label><input id="g-days" name="firstDays" type="number" min="7" max="730" value="${esc(gm.firstDays || 90)}"></div>
+      <div class="field check"><input id="g-ai" name="ai" type="checkbox" ${gm.ai ? 'checked' : ''}><label for="g-ai">Use AI through my Worker for better company and role detection (sends sender, subject and preview of matching emails)</label></div>
+      <div class="form-actions"><button class="btn primary" type="submit">Save</button><button class="btn ghost" type="button" data-action="gmail-reset">Rescan from scratch</button></div>
+    </form>
   </section>
 
   <section class="block">
@@ -963,6 +1003,22 @@ document.addEventListener('click', async (e) => {
       render();
       break;
     }
+    case 'gmail-scan': {
+      const gm = (await db.kvGet('gmail')) || {};
+      if (!gm.clientId) { toast('Add your Google client ID in Settings first.'); go('#/settings'); break; }
+      el.disabled = true;
+      const status = $('#scan-status');
+      try {
+        const r = await gmail.scan({ clientId: gm.clientId, useAi: !!gm.ai, onProgress: (m) => { if (status) status.textContent = m; } });
+        toast(r.added ? `${r.added} new suggestion${r.added === 1 ? '' : 's'}` : `Checked ${r.scanned} emails. Nothing new.`);
+      } catch (err) {
+        toast(err.message || 'Scan failed');
+      }
+      render();
+      break;
+    }
+    case 'gmail-ignore': await gmail.ignore(el.dataset.msg); render(); break;
+    case 'gmail-reset': await gmail.resetScan(); toast('Next scan starts from scratch.'); break;
     case 'starter-links': {
       const existing = new Set(db.list('links').map((r) => (r.data.name || '').toLowerCase()));
       let n = 0;
@@ -1057,6 +1113,15 @@ document.addEventListener('submit', async (e) => {
       await db.kvSet('voice', { url: String(fd.get('url') || '').trim(), token: String(fd.get('token') || ''), cleanup: form.elements.cleanup.checked });
       toast('Saved');
       retryPending();
+    } else if (kind === 'gmail-accept') {
+      const fd = new FormData(form);
+      const rec = await gmail.accept(form.dataset.msg, { company: String(fd.get('company') || '').trim(), role: String(fd.get('role') || '').trim(), status: String(fd.get('status')) });
+      toast(rec ? `Saved to Jobs: ${titleOf(rec)}` : 'Already handled', { undo: !!rec });
+      render();
+    } else if (kind === 'gmail') {
+      const fd = new FormData(form);
+      await db.kvSet('gmail', { clientId: String(fd.get('clientId') || '').trim(), firstDays: Number(fd.get('firstDays')) || 90, ai: form.elements.ai.checked });
+      toast('Saved');
     } else if (kind === 'device') {
       await db.kvSet('device', String(new FormData(form).get('device') || 'Device').trim());
       toast('Saved');
@@ -1076,7 +1141,7 @@ let renderQueued = false;
 function queueRender(info) {
   // don't wipe a form the user is typing in
   if (formDirty) return;
-  if (['settings', 'new', 'search'].includes(currentRoute.name)) return;
+  if (['settings', 'new', 'search', 'inbox'].includes(currentRoute.name)) return;
   if (currentRoute.name === 'r' && info?.rec && info.rec.id !== currentRoute.parts[0]) return;
   if (renderQueued) return;
   renderQueued = true;

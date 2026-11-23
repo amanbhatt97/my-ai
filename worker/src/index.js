@@ -1,6 +1,7 @@
 // Cloudflare Worker that keeps API keys off the phone.
 //   POST /transcribe  multipart "file" (one audio clip ≤ ~25 s) → { text }
 //   POST /cleanup     { text } → { text, mood, people, areas, tasks }
+//   POST /jobmail     { emails: [{id, from, subject, snippet, date}] } → { results }
 // Every request must carry the X-App-Token header matching the APP_TOKEN secret.
 
 import Anthropic from '@anthropic-ai/sdk';
@@ -89,6 +90,63 @@ async function cleanup(request, env) {
   }
 }
 
+const JOBMAIL_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['results'],
+  properties: {
+    results: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['id', 'is_job_email', 'company', 'role', 'status'],
+        properties: {
+          id: { type: 'string' },
+          is_job_email: { type: 'boolean' },
+          company: { type: 'string' },
+          role: { type: 'string' },
+          status: { type: ['string', 'null'], enum: ['applied', 'screening', 'interview', 'offer', 'rejected', null] },
+        },
+      },
+    },
+  },
+};
+
+const JOBMAIL_SYSTEM = `You read email metadata (sender, subject, preview) from one person's inbox and identify emails about that person's own job applications.
+
+For each email return:
+- is_job_email: true only if it is about an application this person made (confirmation, screening, interview, assessment, offer, rejection). Job alerts, newsletters, recruiter marketing and "jobs you may like" are false.
+- company: the hiring company, not the applicant-tracking system or job board (Greenhouse, Lever, Workday, LinkedIn, Naukri are platforms, not employers). Empty if unknown.
+- role: the job title if stated, else empty.
+- status: applied (confirmation), screening (recruiter or HR call), interview (interview or assessment invite), offer, rejected; null if not a job email.`;
+
+async function jobmail(request, env) {
+  const { emails } = await request.json();
+  if (!Array.isArray(emails) || !emails.length) return json(env, { results: [] });
+  if (!env.ANTHROPIC_API_KEY) return json(env, { error: 'AI not configured' }, 501);
+  const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
+  const items = emails.slice(0, 25).map((e) => ({
+    id: String(e.id), from: String(e.from || '').slice(0, 200), subject: String(e.subject || '').slice(0, 300), preview: String(e.snippet || '').slice(0, 400), date: String(e.date || ''),
+  }));
+  const response = await client.beta.messages.create({
+    model: env.CLEANUP_MODEL || 'claude-opus-5-5',
+    max_tokens: 16000,
+    betas: ['server-side-fallback-2026-07-01'],
+    fallbacks: 'default',
+    output_config: { effort: 'low', format: { type: 'json_schema', schema: JOBMAIL_SCHEMA } },
+    system: JOBMAIL_SYSTEM,
+    messages: [{ role: 'user', content: `<emails>\n${JSON.stringify(items)}\n</emails>` }],
+  });
+  if (response.stop_reason === 'refusal' || response.stop_reason === 'max_tokens') return json(env, { error: 'AI could not read these' }, 502);
+  const block = response.content.find((b) => b.type === 'text');
+  try {
+    return json(env, JSON.parse(block.text));
+  } catch {
+    return json(env, { error: 'Bad AI response' }, 502);
+  }
+}
+
 export default {
   async fetch(request, env) {
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors(env) });
@@ -100,6 +158,7 @@ export default {
     try {
       if (pathname === '/transcribe') return await transcribe(request, env);
       if (pathname === '/cleanup') return await cleanup(request, env);
+      if (pathname === '/jobmail') return await jobmail(request, env);
       return json(env, { error: 'Not found' }, 404);
     } catch (e) {
       return json(env, { error: e.message || 'Server error' }, 500);

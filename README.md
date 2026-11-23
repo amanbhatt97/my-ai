@@ -59,13 +59,28 @@ Before relying on it:
 
 Privacy note: voice audio and transcripts are sent to Sarvam (and to Anthropic if cleanup is on) to be processed. Everything stored afterwards is encrypted.
 
+### 4. Gmail → job applications (optional)
+
+The app reads your inbox **read-only**, right in your browser. It finds application confirmations, interview invites, rejections and offers, then shows them as suggestions under Jobs → Gmail. Nothing is added until you accept it. Emails are not stored; each job keeps the subject, date and a link back to the email.
+
+One-time Google setup (about 10 minutes):
+
+1. Go to [console.cloud.google.com](https://console.cloud.google.com/) and create a project (e.g. "Life").
+2. APIs & Services → Library → **Gmail API** → Enable.
+3. APIs & Services → **OAuth consent screen** → External. Fill in the app name and your email. Add the scope `.../auth/gmail.readonly`. Under **Test users**, add your Gmail address. Leave the app in *Testing*.
+4. APIs & Services → **Credentials** → Create credentials → **OAuth client ID** → Web application. Under *Authorized JavaScript origins*, add `https://<username>.github.io`. Create it and copy the **Client ID**.
+5. In the app: Settings → Gmail → paste the Client ID → Save. Then Jobs → Gmail → **Scan Gmail**.
+
+Google will warn "Google hasn't verified this app". That's expected, because it's your own private app; choose Continue. Sign-in lasts about an hour, so later scans may ask you to pick your account again.
+
+For better company and role detection, tick "Use AI through my Worker" (needs the Worker from step 3 with `ANTHROPIC_API_KEY`). Only the sender, subject and preview of matching emails are sent.
+
 ## Adding something new to track
 
 Add an entry to `MODULES` in `js/schemas.js`. Lists, forms, search, history, sync and reminders all work automatically. Give a date field `remind: N` to have it show up in Heads up N days ahead.
 
 ## What's next
 
-- Gmail: suggest job applications and status changes from your inbox (you confirm each one).
 - Google Calendar: today's events on Now, and interview events linked to the matching job.
 - Google Drive: attach files to any item; daily encrypted backup.
 - AI help with decisions: ask questions across your own data.
@@ -81,6 +96,7 @@ js/db.js              IndexedDB storage, history, undo, trash
 js/crypto.js          encryption
 js/sync.js            encrypted GitHub sync
 js/journal.js         voice recording + transcription
+js/gmail.js           Gmail scan → job suggestions
 sw.js                 offline support
 worker/               Cloudflare Worker for speech-to-text and cleanup
 ```

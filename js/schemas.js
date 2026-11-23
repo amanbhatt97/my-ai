@@ -133,6 +133,7 @@ export const MODULES = [
       f('nextAction', 'Next action', 'text'), f('nextActionDate', 'Next action date', 'date', { remind: 0 }),
       f('salary', 'Salary / expected', 'text'), f('contact', 'Contact / recruiter', 'text'),
       f('resume', 'Résumé version used', 'url'), f('interviews', 'Interview notes & questions', 'long'), notes,
+      f('emails', 'Emails', 'json', { hidden: true }),
     ],
   },
   {

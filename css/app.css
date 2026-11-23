@@ -364,3 +364,10 @@ details.more summary::before { content: '+'; font-family: var(--mono); width: 16
 details.more[open] summary::before { content: '–'; }
 details.more summary::-webkit-details-marker { display: none; }
 details.more > .form { padding-bottom: 0; }
+
+/* gmail suggestions */
+.mail-subj { margin: 0 0 4px; font-weight: 600; overflow-wrap: anywhere; }
+.mail .small.muted { margin: 0 0 12px; overflow-wrap: anywhere; }
+.mail-fields { display: grid; grid-template-columns: 1fr; gap: 10px; margin-bottom: 12px; }
+@media (min-width: 700px) { .mail-fields { grid-template-columns: 1fr 1fr 180px; } }
+.mail input[readonly] { color: var(--muted); }
