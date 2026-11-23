@@ -14,11 +14,26 @@ const doc = f('docLocation', 'Where the physical document is', 'text', { ph: 'Bl
 const scan = f('scan', 'Scan / file link (Drive)', 'url');
 
 export const GROUPS = [
-  'Daily', 'Plan', 'Career', 'Learning', 'Health', 'Money', 'Own',
+  'Links', 'Daily', 'Plan', 'Career', 'Learning', 'Health', 'Money', 'Own',
   'People', 'Travel', 'Home', 'Presence', 'Life', 'Emergency',
 ];
 
+export const LINK_CATEGORIES = ['profile', 'finance', 'work', 'learning', 'government', 'health', 'travel', 'shopping', 'tools', 'other'];
+
 export const MODULES = [
+  // ── Links ───────────────────────────────────────────────────────────
+  {
+    id: 'links', name: 'Links', group: 'Links', title: 'name', status: 'category',
+    fields: [
+      f('name', 'Name', 'text', { req: true, ph: 'GitHub / LinkedIn / Zerodha / EPFO' }),
+      f('url', 'URL', 'url', { req: true }),
+      f('category', 'Category', 'select', { options: LINK_CATEGORIES, def: 'profile' }),
+      f('pinned', 'Pin to Now screen', 'check'),
+      f('handle', 'Username / login hint (never the password)', 'text'),
+      notes,
+    ],
+  },
+
   // ── Daily ───────────────────────────────────────────────────────────
   {
     id: 'tasks', name: 'Tasks', group: 'Daily', title: 'title', status: 'status',

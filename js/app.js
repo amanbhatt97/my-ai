@@ -1,7 +1,7 @@
 import * as db from './db.js';
 import * as sync from './sync.js';
 import { Recorder, saveRecording, transcribe, retryPending, localStamp } from './journal.js';
-import { MODULES, MODULE, GROUPS, titleOf, defaults, isDone } from './schemas.js';
+import { MODULES, MODULE, GROUPS, LINK_CATEGORIES, titleOf, defaults, isDone } from './schemas.js';
 
 // ── tiny helpers ────────────────────────────────────────────────────────
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -46,7 +46,60 @@ const I = {
   gear: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/>',
   back: '<path d="M15 5l-7 7 7 7"/>',
   check: '<path d="M5 12l5 5 9-10"/>',
+  chart: '<path d="M5 20V10M12 20V4M19 20v-7"/>',
+  out: '<path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>',
+  edit: '<path d="M4 20h4L19 9l-4-4L4 16z"/>',
+  link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
 };
+
+// ── theme ───────────────────────────────────────────────────────────────
+function getTheme() { try { return localStorage.getItem('theme') || 'system'; } catch { return 'system'; } }
+function applyTheme(t) {
+  try { localStorage.setItem('theme', t); } catch { /* private mode */ }
+  if (t === 'system') document.documentElement.removeAttribute('data-theme');
+  else document.documentElement.setAttribute('data-theme', t);
+  const light = t === 'light' || (t === 'system' && matchMedia('(prefers-color-scheme: light)').matches);
+  document.querySelector('meta[name="theme-color"]').setAttribute('content', light ? '#f5f6f3' : '#07080a');
+}
+
+// ── time progress (day / week / year) ──────────────────────────────────
+function timeProgress() {
+  const n = new Date();
+  const day = (n.getHours() * 60 + n.getMinutes()) / 1440;
+  const week = (((n.getDay() + 6) % 7) + day) / 7;
+  const y0 = new Date(n.getFullYear(), 0, 1);
+  const y1 = new Date(n.getFullYear() + 1, 0, 1);
+  const year = (n - y0) / (y1 - y0);
+  return [['Day', day], ['Week', week], ['Year', year]].map(([k, v]) => [k, Math.floor(v * 100)]);
+}
+
+// ── setup guide ─────────────────────────────────────────────────────────
+const SETUP = [
+  { title: 'Your links', why: 'Portfolio, GitHub, LinkedIn, notes, bank and investment logins: one tap away.', modules: ['links'], starter: true },
+  { title: 'Documents & IDs', why: 'Passport, PAN, Aadhaar, licence, degrees. Expiry and where the physical copy is.', modules: ['documents'] },
+  { title: 'Vehicles', why: 'Insurance, PUC and service reminders, and where the RC is.', modules: ['vehicles'] },
+  { title: 'Insurance', why: 'Health, term and vehicle policies with renewal dates and nominees.', modules: ['insurance'] },
+  { title: 'Accounts & loans', why: 'Where your money is, nominees, EMIs and card due dates.', modules: ['accounts', 'loans'] },
+  { title: 'Health profile', why: 'Blood group, allergies, conditions, vaccinations, check-up dates.', modules: ['healthprofile'] },
+  { title: 'Birthdays', why: "People who matter, with reminders a week before.", modules: ['people'] },
+  { title: 'Things you own', why: 'Phone, laptop, appliances, with warranty end dates and invoices.', modules: ['possessions'] },
+  { title: 'Habits', why: 'Pick 3–5. They appear as one-tap toggles on Now.', modules: ['habits'] },
+  { title: "This year's goals", why: 'A few goals for the year. Break them into months and weeks later.', modules: ['goals'], query: 'horizon=year' },
+];
+const setupDone = (s) => s.modules.some((m) => db.list(m).length > 0);
+
+function starterLinks() {
+  const host = location.hostname.endsWith('.github.io') ? location.hostname.split('.')[0] : '';
+  const user = host || 'your-username';
+  return [
+    { name: 'GitHub', url: `https://github.com/${user}`, category: 'profile', pinned: true },
+    { name: 'Portfolio', url: `https://${user}.github.io/portfolio/`, category: 'profile', pinned: true },
+    { name: 'Notes', url: `https://${user}.github.io/Notes/`, category: 'learning', pinned: true },
+    { name: 'LinkedIn', url: 'https://www.linkedin.com/in/', category: 'profile', pinned: true },
+    { name: 'Income Tax e-filing', url: 'https://www.incometax.gov.in/', category: 'finance' },
+    { name: 'EPF passbook', url: 'https://passbook.epfindia.gov.in/', category: 'finance' },
+  ];
+}
 const icon = (name, size = 20) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${I[name]}</svg>`;
 
 // ── toast with undo ─────────────────────────────────────────────────────
@@ -106,6 +159,7 @@ const go = (hash) => { location.hash = hash; };
 const VIEWS = {
   now: viewNow, plan: viewPlan, journal: viewJournal, life: viewLife,
   m: viewModule, new: viewNew, r: viewRecord, search: viewSearch, settings: viewSettings, trash: viewTrash,
+  links: viewLinks, setup: viewSetup, progress: viewProgress,
 };
 
 async function render() {
@@ -117,7 +171,7 @@ async function render() {
   main.focus({ preventScroll: true });
   window.scrollTo(0, 0);
   for (const a of document.querySelectorAll('.nav a')) {
-    a.classList.toggle('on', a.dataset.nav === currentRoute.name || (a.dataset.nav === 'life' && ['m', 'r', 'new', 'trash'].includes(currentRoute.name)));
+    a.classList.toggle('on', a.dataset.nav === currentRoute.name || (a.dataset.nav === 'life' && ['m', 'r', 'new', 'trash', 'links', 'setup'].includes(currentRoute.name)));
   }
   hydrate();
 }
@@ -178,8 +232,11 @@ async function viewNow() {
 
   return `${header('Now', {
     kicker,
-    actions: `<a class="icon-btn" href="#/search" aria-label="Search">${icon('search')}</a><a class="icon-btn" href="#/settings" aria-label="Settings">${icon('gear')}</a>`,
+    actions: `<a class="icon-btn" href="#/progress" aria-label="Progress">${icon('chart')}</a><a class="icon-btn" href="#/search" aria-label="Search">${icon('search')}</a><a class="icon-btn" href="#/settings" aria-label="Settings">${icon('gear')}</a>`,
   })}
+  <div class="tp" aria-label="Time elapsed">${timeProgress().map(([k, v]) => `<div class="tp-item"><span class="mono">${k.toUpperCase()}</span><span class="tp-bar"><span style="width:${v}%"></span></span><span class="mono">${v}%</span></div>`).join('')}</div>
+  ${setupCard()}
+  ${pinnedLinks()}
   <div class="grid-2">
     <section class="block">
       <span class="label">Next</span>
@@ -215,10 +272,11 @@ async function viewNow() {
     </section>
 
     <section class="block">
-      <div class="label-row"><span class="label">Habits</span><a href="#/m/habits" class="link">Edit</a></div>
+      <div class="label-row"><span class="label">Habits</span><a href="#/progress" class="link">Progress</a></div>
       ${habits.length ? `<div class="habits">${habits.map((h) => {
         const on = !!(h.data.log || {})[t];
-        return `<button type="button" class="chip ${on ? 'on' : ''}" data-action="habit" data-id="${h.id}" aria-pressed="${on}">${esc(h.data.name)}</button>`;
+        const s = streak(h.data.log || {});
+        return `<button type="button" class="chip ${on ? 'on' : ''}" data-action="habit" data-id="${h.id}" aria-pressed="${on}">${esc(h.data.name)}${s ? `<span class="chip-n mono">${s}d</span>` : ''}</button>`;
       }).join('')}</div>` : `<p class="muted">Add 3–5 habits you want to keep. <a href="#/new/habits">Add one</a></p>`}
     </section>
 
@@ -233,6 +291,177 @@ async function viewNow() {
       <button type="button" class="btn primary wide" data-action="record">${icon('mic', 18)} Speak about your day</button>
     </section>
   </div>`;
+}
+
+function setupCard() {
+  const done = SETUP.filter(setupDone).length;
+  if (done === SETUP.length) return '';
+  const next = SETUP.find((s) => !setupDone(s));
+  return `<a class="setup-card" href="#/setup">
+    <span class="mono small">SET UP · ${done}/${SETUP.length}</span>
+    <span class="setup-next">Next: ${esc(next.title)}</span>
+    <span class="bar"><span style="width:${Math.round((done / SETUP.length) * 100)}%"></span></span>
+  </a>`;
+}
+
+function favicon(name) {
+  return `<span class="mono-badge" aria-hidden="true">${esc((name || '?').trim().slice(0, 2).toUpperCase())}</span>`;
+}
+
+function pinnedLinks() {
+  const pins = db.list('links').filter((r) => r.data.pinned && r.data.url).sort((a, b) => titleOf(a).localeCompare(titleOf(b)));
+  if (!pins.length) return '';
+  return `<nav class="pins" aria-label="Pinned links">${pins.map((r) => `<a href="${esc(r.data.url)}" target="_blank" rel="noopener">${favicon(r.data.name)}<span>${esc(r.data.name)}</span></a>`).join('')}<a href="#/links" class="pins-all">${icon('link', 16)}<span>All</span></a></nav>`;
+}
+
+// ── LINKS ───────────────────────────────────────────────────────────────
+async function viewLinks() {
+  const all = db.list('links');
+  const groups = LINK_CATEGORIES.map((c) => [c, all.filter((r) => (r.data.category || 'other') === c).sort((a, b) => titleOf(a).localeCompare(titleOf(b)))]).filter(([, l]) => l.length);
+  return `${header('Links', { kicker: `${all.length} SAVED`, back: '#/life', actions: `<a class="btn primary small" href="#/new/links">+ Link</a>` })}
+  ${all.length ? '' : `<div class="empty"><p>Profiles, finance logins, government portals: everything you open often.</p><button type="button" class="btn primary" data-action="starter-links">Add starter links</button></div>`}
+  ${groups.map(([c, list]) => `<section class="block">
+    <span class="label">${esc(c === 'profile' ? 'Profiles' : c[0].toUpperCase() + c.slice(1))}</span>
+    <ul class="link-list">${list.map((r) => `<li>
+      <a class="link-open" href="${esc(r.data.url)}" target="_blank" rel="noopener">${favicon(r.data.name)}<span class="ll-text"><span>${esc(r.data.name)}</span><span class="mono small muted">${esc((r.data.url || '').replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '').slice(0, 42))}</span></span>${icon('out', 16)}</a>
+      <a class="icon-btn sm" href="#/r/${r.id}" aria-label="Edit ${esc(r.data.name)}">${icon('edit', 16)}</a>
+    </li>`).join('')}</ul>
+  </section>`).join('')}`;
+}
+
+// ── PROGRESS (tracking over time) ───────────────────────────────────────
+const dayKey = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+function lastNDays(n) {
+  const out = [];
+  const t = startOfToday();
+  for (let i = n - 1; i >= 0; i--) { const d = new Date(t); d.setDate(t.getDate() - i); out.push(d); }
+  return out;
+}
+function streak(log) {
+  const t = startOfToday();
+  const d = new Date(t);
+  if (!log[dayKey(d)]) d.setDate(d.getDate() - 1); // today not done yet doesn't break the streak
+  let n = 0;
+  while (log[dayKey(d)]) { n++; d.setDate(d.getDate() - 1); }
+  return n;
+}
+function completedDay(r) {
+  return r.data.completedOn || (r.data.status === 'done' ? r.updatedAt.slice(0, 10) : null);
+}
+function weekStart(d) { const x = new Date(d); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); x.setHours(0, 0, 0, 0); return x; }
+
+async function viewProgress() {
+  const t = todayStr();
+  const tasks = db.list('tasks');
+  const open = tasks.filter((r) => r.data.status !== 'done');
+  const overdue = open.filter((r) => r.data.due && r.data.due < t);
+  const ws = weekStart(new Date());
+  const doneThisWeek = tasks.filter((r) => { const c = completedDay(r); return c && parseDay(c) >= ws; }).length;
+  const monthKey = t.slice(0, 7);
+  const journalMonth = db.list('journal').filter((r) => (r.data.at || '').startsWith(monthKey)).length;
+  const habits = db.list('habits').filter((h) => h.data.active !== false);
+  const days30 = lastNDays(30);
+  const bestStreak = Math.max(0, ...habits.map((h) => streak(h.data.log || {})));
+
+  // tasks done per week, last 8 weeks
+  const weeks = [];
+  for (let i = 7; i >= 0; i--) { const s = new Date(ws); s.setDate(ws.getDate() - i * 7); weeks.push({ s, n: 0 }); }
+  for (const r of tasks) {
+    const c = completedDay(r);
+    if (!c) continue;
+    const w = weekStart(parseDay(c)).getTime();
+    const slot = weeks.find((x) => x.s.getTime() === w);
+    if (slot) slot.n++;
+  }
+  const maxW = Math.max(1, ...weeks.map((w) => w.n));
+
+  // mood: day log first, then the average of journal moods that day
+  const moodBy = {};
+  for (const r of db.list('journal')) if (r.data.mood && r.data.at) (moodBy[r.data.at.slice(0, 10)] ||= []).push(Number(r.data.mood));
+  for (const k of Object.keys(moodBy)) moodBy[k] = Math.round(moodBy[k].reduce((a, b) => a + b, 0) / moodBy[k].length);
+  for (const r of db.list('days')) if (r.data.mood && r.data.date) moodBy[r.data.date] = Number(r.data.mood);
+  const moods = days30.map((d) => ({ d, v: moodBy[dayKey(d)] || null }));
+  const logged = moods.filter((m) => m.v);
+  const avgMood = logged.length ? (logged.reduce((a, m) => a + m.v, 0) / logged.length).toFixed(1) : '–';
+
+  const goals = db.list('goals').filter((g) => g.data.status === 'active' || !g.data.status);
+
+  const tile = (v, k, cls = '') => `<div class="stat"><span class="stat-v ${cls}">${v}</span><span class="mono small muted">${esc(k)}</span></div>`;
+  return `${header('Progress', { kicker: 'TRACKING', back: '#/now' })}
+  <div class="stats">
+    ${tile(doneThisWeek, 'TASKS DONE THIS WEEK')}
+    ${tile(open.length, 'OPEN TASKS')}
+    ${tile(overdue.length, 'OVERDUE', overdue.length ? 'warn' : '')}
+    ${tile(bestStreak, 'BEST HABIT STREAK')}
+    ${tile(journalMonth, 'JOURNAL ENTRIES THIS MONTH')}
+    ${tile(avgMood, 'AVG MOOD · 30 DAYS')}
+  </div>
+
+  <section class="block">
+    <div class="label-row"><span class="label">Habits · last 30 days</span><a class="link" href="#/m/habits">Edit</a></div>
+    ${habits.length ? habits.map((h) => {
+      const log = h.data.log || {};
+      const done = days30.filter((d) => log[dayKey(d)]).length;
+      const target = Math.round(((Number(h.data.perWeek) || 7) / 7) * 30);
+      return `<div class="habit-row">
+        <div class="pr-top"><span>${esc(h.data.name)}</span><span class="mono small muted">${streak(log)}d streak · ${done}/${target}</span></div>
+        <div class="hgrid" role="img" aria-label="${esc(h.data.name)}: done on ${done} of the last 30 days">${days30.map((d) => {
+          const on = !!log[dayKey(d)];
+          return `<span class="${on ? 'on' : ''}${dayKey(d) === t ? ' today' : ''}" title="${fmtDay(dayKey(d))}: ${on ? 'done' : 'not done'}"></span>`;
+        }).join('')}</div>
+      </div>`;
+    }).join('') : `<p class="muted">No habits yet. <a class="link" href="#/new/habits">Add one</a></p>`}
+  </section>
+
+  <div class="grid-2">
+    <section class="block">
+      <span class="label">Tasks done per week</span>
+      <div class="wbars" role="img" aria-label="Tasks done per week, last 8 weeks: ${weeks.map((w) => w.n).join(', ')}">
+        ${weeks.map((w, i) => `<div class="wbar" title="Week of ${fmtDay(dayKey(w.s))}: ${w.n} done">
+          <span class="mono small ${i === weeks.length - 1 || w.n === maxW ? '' : 'invisible'}">${w.n}</span>
+          <span class="wbar-fill" style="height:${Math.round((w.n / maxW) * 100)}%"></span>
+        </div>`).join('')}
+      </div>
+      <div class="wbar-axis mono small muted"><span>${fmtDay(dayKey(weeks[0].s))}</span><span>this week</span></div>
+    </section>
+
+    <section class="block">
+      <span class="label">Mood · last 30 days</span>
+      <div class="mchart" role="img" aria-label="Mood over the last 30 days, average ${avgMood}">
+        ${moods.map((m) => `<span class="mcol" title="${fmtDay(dayKey(m.d))}: ${m.v ? `mood ${m.v}` : 'not logged'}">${m.v ? `<span class="mdot" style="bottom:${(m.v - 1) * 25}%"></span>` : ''}</span>`).join('')}
+      </div>
+      <div class="wbar-axis mono small muted"><span>${fmtDay(dayKey(days30[0]))}</span><span>today</span></div>
+      ${logged.length ? '' : '<p class="small muted">Tap a mood on Now each day, or speak in the journal.</p>'}
+    </section>
+  </div>
+
+  <section class="block">
+    <div class="label-row"><span class="label">Active goals</span><a class="link" href="#/plan">Plan</a></div>
+    ${goals.length ? goals.map((g) => progressRow(g)).join('') : '<p class="muted">No active goals.</p>'}
+  </section>`;
+}
+
+// ── SETUP GUIDE ─────────────────────────────────────────────────────────
+async function viewSetup() {
+  const done = SETUP.filter(setupDone).length;
+  return `${header('Set up', { kicker: `${done} OF ${SETUP.length} DONE`, back: '#/now' })}
+  <p class="muted lead">Enter these once. After that the app reminds you before anything expires or is due. Each step takes 2–10 minutes; do them in any order.</p>
+  <ol class="steps">${SETUP.map((s, i) => {
+    const ok = setupDone(s);
+    const count = s.modules.reduce((n, m) => n + db.list(m).length, 0);
+    return `<li class="${ok ? 'ok' : ''}">
+      <span class="step-no mono">${ok ? icon('check', 16) : String(i + 1).padStart(2, '0')}</span>
+      <div class="step-body">
+        <span class="step-title">${esc(s.title)}${count ? ` <span class="mono small muted">· ${count}</span>` : ''}</span>
+        <span class="small muted">${esc(s.why)}</span>
+        <span class="step-actions">
+          ${s.starter && !count ? '<button type="button" class="btn primary small" data-action="starter-links">Add starter links</button>' : ''}
+          ${s.modules.map((m) => `<a class="btn ${ok || s.starter ? 'ghost' : 'primary'} small" href="#/new/${m}${s.query ? `?${s.query}` : ''}">+ ${esc(MODULE[m].name)}</a>`).join('')}
+          ${count ? `<a class="link" href="#/${s.modules[0] === 'links' ? 'links' : `m/${s.modules[0]}`}">View</a>` : ''}
+        </span>
+      </div>
+    </li>`;
+  }).join('')}</ol>`;
 }
 
 function progressRow(g) {
@@ -311,12 +540,18 @@ async function viewJournal() {
 
 // ── LIFE (all modules) ─────────────────────────────────────────────────
 async function viewLife() {
-  return `${header('Life', { kicker: `${MODULES.length} AREAS`, actions: `<a class="icon-btn" href="#/search" aria-label="Search">${icon('search')}</a>` })}
-  ${GROUPS.map((g) => `<section class="block">
+  const setupLeft = SETUP.length - SETUP.filter(setupDone).length;
+  return `${header('Life', { kicker: `${MODULES.length} SECTIONS`, actions: `<a class="icon-btn" href="#/search" aria-label="Search">${icon('search')}</a>` })}
+  <div class="quick3">
+    <a href="#/links">${icon('link', 18)}<span>Links</span><span class="mono small muted">${db.list('links').length}</span></a>
+    <a href="#/progress">${icon('chart', 18)}<span>Progress</span><span class="mono small muted">stats</span></a>
+    <a href="#/setup">${icon('check', 18)}<span>Set up</span><span class="mono small muted">${setupLeft ? `${setupLeft} left` : 'done'}</span></a>
+  </div>
+  ${GROUPS.filter((g) => g !== 'Links').map((g) => `<section class="block">
     <span class="label">${esc(g)}</span>
-    <div class="tiles">${MODULES.filter((m) => m.group === g).map((m) => {
+    <div class="index">${MODULES.filter((m) => m.group === g).map((m) => {
       const n = db.list(m.id).length;
-      return `<a class="tile" href="#/m/${m.id}"><span>${esc(m.name)}</span><span class="mono small muted">${n}</span></a>`;
+      return `<a href="#/m/${m.id}"><span>${esc(m.name)}</span><span class="mono small ${n ? '' : 'muted'}">${String(n).padStart(2, '0')}</span></a>`;
     }).join('')}</div>
   </section>`).join('')}
   <section class="block"><div class="links"><a href="#/trash">Trash</a><a href="#/settings">Settings</a></div></section>`;
@@ -382,6 +617,20 @@ function fieldHtml(fd, value) {
   }
 }
 
+// Show the first few fields plus any that have a value; tuck the rest away.
+function formFields(m, data) {
+  const visible = m.fields.filter((fd) => !fd.hidden);
+  const hasVal = (fd) => {
+    const v = data[fd.k];
+    return !(v === undefined || v === '' || v === null || v === false || (Array.isArray(v) && !v.length)) && fd.def !== v;
+  };
+  const primary = [];
+  const extra = [];
+  visible.forEach((fd, i) => ((i < 4 || fd.req || hasVal(fd) || fd.readonly) ? primary : extra).push(fd));
+  return `${primary.map((fd) => fieldHtml(fd, data[fd.k])).join('')}
+    ${extra.length ? `<details class="more"><summary>More details <span class="mono small muted">${extra.length}</span></summary><div class="form">${extra.map((fd) => fieldHtml(fd, data[fd.k])).join('')}</div></details>` : ''}`;
+}
+
 function readForm(form, m) {
   const fdata = new FormData(form);
   const out = {};
@@ -414,7 +663,7 @@ async function viewNew(idWithQuery) {
   if (id === 'reviews' || id === 'decisions' || id === 'wins' || id === 'lessons') data.date = todayStr();
   return `${header(`New · ${m.name}`, { back: `#/m/${id}` })}
   <form class="form" data-form="new" data-module="${id}">
-    ${m.fields.map((fd) => fieldHtml(fd, data[fd.k])).join('')}
+    ${formFields(m, data)}
     ${Object.entries(data).filter(([k]) => m.fields.find((x) => x.k === k)?.hidden).map(([k, v]) => `<input type="hidden" data-hidden="${esc(k)}" value="${esc(JSON.stringify(v))}">`).join('')}
     <div class="form-actions"><button class="btn primary wide" type="submit">Save</button></div>
   </form>`;
@@ -437,7 +686,7 @@ async function viewRecord(id, tab = 'details') {
   ${tab === 'history' ? `<section class="block" id="history" data-id="${id}"><p class="muted">Loading…</p></section>` : `
   ${isJournal ? journalExtras(r) : ''}
   <form class="form" data-form="edit" data-id="${id}" data-module="${r.module}">
-    ${m.fields.map((fd) => fieldHtml(fd, r.data[fd.k])).join('')}
+    ${formFields(m, r.data)}
     <div class="form-actions">
       <button class="btn primary" type="submit">Save</button>
       ${deleted ? '' : `<button class="btn danger" type="button" data-action="delete" data-id="${id}">Delete</button>`}
@@ -516,7 +765,14 @@ async function viewSettings() {
   const voice = (await db.kvGet('voice')) || {};
   const device = await db.kvGet('device', '');
   const last = await db.kvGet('lastSync');
+  const theme = getTheme();
   return `${header('Settings', { back: '#/now' })}
+  <section class="block">
+    <span class="label">Appearance</span>
+    <div class="chips" role="radiogroup" aria-label="Theme">
+      ${['system', 'dark', 'light'].map((t) => `<label class="chip-radio"><input type="radio" name="theme" value="${t}" ${t === theme ? 'checked' : ''}><span>${t === 'system' ? 'Match device' : t[0].toUpperCase() + t.slice(1)}</span></label>`).join('')}
+    </div>
+  </section>
   <section class="block">
     <span class="label">Sync · private GitHub repo</span>
     <p class="small muted">Data is encrypted on this device with your passphrase before upload. The passphrase is never stored or sent. Lose it and the synced data cannot be recovered.</p>
@@ -707,6 +963,15 @@ document.addEventListener('click', async (e) => {
       render();
       break;
     }
+    case 'starter-links': {
+      const existing = new Set(db.list('links').map((r) => (r.data.name || '').toLowerCase()));
+      let n = 0;
+      for (const l of starterLinks()) if (!existing.has(l.name.toLowerCase())) { await db.create('links', l); n++; }
+      toast(`Added ${n} links. Fix the LinkedIn URL and add your own.`, { undo: false });
+      go('#/links');
+      render();
+      break;
+    }
     case 'sync-now': await sync.syncNow(); render(); break;
     case 'sync-off': await sync.disconnect(); toast('Sync disconnected. Data stays on this device.'); render(); break;
     case 'export': {
@@ -722,6 +987,7 @@ document.addEventListener('click', async (e) => {
 });
 
 document.addEventListener('change', async (e) => {
+  if (e.target.matches('input[name="theme"]')) { applyTheme(e.target.value); return; }
   if (e.target.matches('input[data-action="import"]')) {
     const file = e.target.files[0];
     if (!file) return;
@@ -755,6 +1021,7 @@ document.addEventListener('submit', async (e) => {
       const m = MODULE[form.dataset.module];
       const data = readForm(form, m);
       for (const h of form.querySelectorAll('input[data-hidden]')) data[h.dataset.hidden] = JSON.parse(h.value);
+      if (m.id === 'tasks' && data.status === 'done' && !(kind === 'edit' && db.get(form.dataset.id)?.data.completedOn)) data.completedOn = todayStr();
       const missing = missingRequired(m, data);
       if (missing.length) { toast(`Fill in: ${missing.join(', ')}`); return; }
       if (kind === 'new') {
@@ -817,6 +1084,8 @@ function queueRender(info) {
 }
 
 async function boot() {
+  applyTheme(getTheme());
+  matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => applyTheme(getTheme()));
   await db.init();
   db.onChange((info) => {
     if (info.type !== 'sync') sync.scheduleSync();
