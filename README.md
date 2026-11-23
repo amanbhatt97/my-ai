@@ -35,7 +35,11 @@ Data is written to a separate `data` branch (`meta.json`, `records/<section>.jso
 
 **If you forget the passphrase, the synced data cannot be recovered.** Keep it in a password manager, and use Settings → Export now and then for a backup (the export is *not* encrypted).
 
-### 3. Voice transcription (optional)
+### 3. Voice journal
+
+Tap the mic and speak: the browser's free built-in speech-to-text writes it down as you talk (Hindi + English, shown in English letters by default), you fix anything and save. No keys, no Worker, no cost. On Android Chrome the audio is processed by Google's speech service, on iPhone by Apple's; the app stores only the text.
+
+### 3b. Optional AI Worker (paid, not needed)
 
 The app records and saves voice notes without this. To get text (and to use Ask), set up the Worker in `worker/`. It holds your API keys so they never sit in the browser. It is one file with no dependencies, so it can be set up entirely in the browser:
 

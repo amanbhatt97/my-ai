@@ -1023,3 +1023,24 @@ main.enter-fwd, main.enter-back, main.enter-same { animation: in-same 0.18s ease
 @keyframes peekIn { from { transform: translateX(40px); opacity: 0; } }
 .item-head .top h1 { font-size: clamp(26px, 6vw, 34px); }
 .peek .chips, .peek .form-actions { justify-content: flex-start; }
+
+/* dictation sheet */
+.sheet-card.dict { gap: 12px; }
+.dict-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.dict-state { display: inline-flex; align-items: center; gap: 8px; font: 500 11px var(--mono); text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); }
+.dict-state i { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+.dict-state[data-state="listening"] { color: var(--danger); }
+.dict-state[data-state="listening"] i { background: var(--danger); animation: pulse 1.2s infinite; }
+.dict-lang { display: inline-flex; padding: 3px; border-radius: 9px; background: var(--surface-2); }
+.dict-lang label { position: relative; }
+.dict-lang input { position: absolute; opacity: 0; pointer-events: none; }
+.dict-lang span { display: inline-flex; align-items: center; min-height: 30px; padding: 0 10px; border-radius: 7px; font-size: 12.5px; color: var(--muted); cursor: pointer; }
+.dict-lang input:checked + span { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,.15); }
+.dict-lang input:focus-visible + span { outline: 2px solid var(--accent); }
+#dict-text { width: 100%; min-height: 160px; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line-2); background: var(--bg); color: var(--text); font: 16px/1.55 var(--font); resize: vertical; }
+#dict-text:focus { outline: none; border-color: var(--accent); }
+.dict-interim { min-height: 18px; margin: -6px 0 0; font-style: italic; }
+.sheet-card.dict .chips, .sheet-card.dict .form-actions { justify-content: flex-start; }
+.dict-note { margin: 0; }
+.center-links { justify-content: center; }
+.dict-roman label { font-size: 14px !important; text-transform: none !important; letter-spacing: 0 !important; font-family: var(--font) !important; }

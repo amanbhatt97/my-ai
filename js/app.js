@@ -8,6 +8,7 @@ import * as gtasks from './gtasks.js';
 import * as autosync from './autosync.js';
 import * as google from './google.js';
 import * as assistant from './ask.js';
+import * as speech from './dictate.js';
 import { ROOMS, ROOM, PLAN_MODULES, roomOf, colorOf, homeOf } from './rooms.js';
 import { MODULES, MODULE, GROUPS, LINK_CATEGORIES, titleOf, defaults, isDone } from './schemas.js';
 
@@ -987,8 +988,8 @@ async function viewJournal() {
   return `${header('Journal', { kicker: `${entries.length} ${entries.length === 1 ? 'ENTRY' : 'ENTRIES'}` })}
   <section class="block center">
     <button type="button" class="mic-big" data-action="record" aria-label="Record a voice entry">${icon('mic', 34)}</button>
-    <p class="muted small">Speak in Hindi, English or both. Saved with date and time.</p>
-    <a class="link" href="#/new/journal">Type instead</a>
+    <p class="muted small">Speak in Hindi, English or both. It's written down as you talk; fix anything, then save.</p>
+    <div class="links center-links"><a class="link" href="#/new/journal">Type instead</a><button type="button" class="link" data-action="record-audio">Save as audio only</button></div>
   </section>
   ${[...byDay.entries()].map(([day, list]) => `<section class="block">
     <span class="label">${day ? fmtDay(day) : 'Undated'}</span>
@@ -1738,8 +1739,8 @@ async function viewSettings() {
   </section>
 
   <section class="block">
-    <span class="label">Voice &amp; assistant</span>
-    <p class="small muted">Your Cloudflare Worker address (see the README). It turns voice notes into text and powers Ask. When you ask something, your records go to Claude through it to be answered, except Emergency info, medical records, medicines, health profile, useful contacts and all account, policy and document numbers, which never leave this device.</p>
+    <span class="label">AI Worker (optional, advanced)</span>
+    <p class="small muted">You don't need this. Speaking into the journal, search and Brief me all work without it, for free. Fill this in only if you set up your own Cloudflare Worker with paid Claude/Sarvam keys for AI answers in Ask. Leave it empty otherwise.</p>
     <form class="form" data-form="voice">
       <div class="field"><label for="v-url">Worker URL</label><input id="v-url" name="url" type="url" value="${esc(voice.url || '')}" placeholder="https://life-voice.yourname.workers.dev"></div>
       <div class="field"><label for="v-token">App token</label><input id="v-token" name="token" type="password" value="${esc(voice.token || '')}" autocomplete="off"></div>
@@ -1905,6 +1906,7 @@ async function openAsk(question) {
     if (sources.length) sEl.innerHTML = `<div class="list">${sources.map((id) => row(db.get(id), { showModule: true })).join('')}</div>`;
   } catch (err) {
     if (seq !== askSeq) return;
+    if (q === BRIEF_Q) { const b = localBrief(); aEl.innerHTML = b.html; if (b.ids.length) sEl.innerHTML = `<div class="list">${b.ids.slice(0, 5).map((id) => row(db.get(id), { showModule: true })).join('')}</div>`; return; }
     // no assistant (or offline): fall back to what plain search can find
     const words = q.toLowerCase().replace(/[?]/g, '').split(/\W+/).filter((w) => w.length >= 3 && !/^(what|when|where|which|does|have|kya|kab|kaun|kahan|mera|meri|mere|the|and|for|this|that|with|from|about|tell|show)$/.test(w));
     const hits = db.all().filter((r) => MODULE[r.module]).map((r) => {
@@ -1919,11 +1921,85 @@ async function openAsk(question) {
   }
 }
 
-function closeSheet() { const s = $('#sheet'); s.classList.remove('open', 'is-peek'); s.innerHTML = ''; }
+// Brief me without any AI service: built from your own dates on the phone
+function localBrief() {
+  const t0 = startOfToday();
+  const rems = reminders();
+  const lines = []; const ids = [];
+  const late = rems.filter((x) => x.days < 0);
+  const week = rems.filter((x) => x.days >= 0 && x.days <= 7);
+  const tasksToday = db.list('tasks').filter((r) => r.data.status !== 'done' && (r.data.status === 'today' || (r.data.due && r.data.due <= todayStr())));
+  if (late.length) { lines.push(`<b>${late.length} overdue:</b> ${late.slice(0, 3).map((x) => esc(`${titleOf(x.r)} (${x.label.toLowerCase()})`)).join(', ')}`); ids.push(...late.map((x) => x.r.id)); }
+  if (tasksToday.length) lines.push(`<b>${plural(tasksToday.length, 'task')} for today.</b>`);
+  if (week.length) { lines.push(`<b>This week:</b> ${week.slice(0, 4).map((x) => esc(`${titleOf(x.r)} ${x.label.toLowerCase()} ${rel(x.days)}`)).join(', ')}`); ids.push(...week.map((x) => x.r.id)); }
+  const stale = db.list('jobs').filter((j) => ['applied', 'screening', 'interview'].includes(j.data.status) && diffDays(t0, parseDay(j.updatedAt.slice(0, 10))) >= 14);
+  if (stale.length) { lines.push(`<b>Follow up:</b> ${stale.slice(0, 3).map((j) => esc(titleOf(j))).join(', ')}: no news in 2+ weeks.`); ids.push(...stale.map((j) => j.id)); }
+  const quiet = db.list('people').filter((p) => p.data.lastContact && diffDays(t0, parseDay(p.data.lastContact)) >= (Number(p.data.everyWeeks) || 6) * 7);
+  if (quiet.length) { lines.push(`<b>Get in touch:</b> ${quiet.slice(0, 3).map((p) => esc(p.data.name)).join(', ')}.`); ids.push(...quiet.map((p) => p.id)); }
+  return { html: lines.length ? lines.join('<br>') : 'Nothing urgent this week. Enjoy it.', ids: [...new Set(ids)] };
+}
+
+function closeSheet() { stopDictation(); const s = $('#sheet'); s.classList.remove('open', 'is-peek'); s.innerHTML = ''; }
 
 // ── recorder sheet ──────────────────────────────────────────────────────
 let recorder = null;
 let recTick = null;
+// ── dictation: speak, see the text appear, fix it, save ─────────────────
+let dictation = null;
+function openDictation() {
+  if (!speech.supported()) { openRecorder(); return; }
+  closeSheet();
+  const lang = lsGet('dictLang', 'hi-IN');
+  const roman = lsGet('dictRoman', true);
+  const sheet = $('#sheet'); sheet.classList.remove('is-peek');
+  sheet.innerHTML = `<div class="sheet-card dict" role="dialog" aria-modal="true" aria-label="Speak">
+    <div class="grab"></div>
+    <div class="dict-top"><span class="dict-state" id="dict-state"><i></i>Starting…</span>
+      <div class="seg dict-lang" role="radiogroup" aria-label="Language">
+        <label><input type="radio" name="dlang" value="hi-IN" ${lang === 'hi-IN' ? 'checked' : ''}><span>Hindi + English</span></label>
+        <label><input type="radio" name="dlang" value="en-IN" ${lang === 'en-IN' ? 'checked' : ''}><span>English</span></label>
+      </div></div>
+    <textarea id="dict-text" rows="7" placeholder="Start speaking… the text appears here and you can fix it before saving." aria-label="What you said"></textarea>
+    <p class="dict-interim muted small" id="dict-interim" aria-live="polite"></p>
+    <label class="field check dict-roman"><input type="checkbox" id="dict-roman" ${roman ? 'checked' : ''}><label for="dict-roman">Write Hindi in English letters (Hinglish)</label></label>
+    <div class="chips" role="radiogroup" aria-label="Entry type">
+      <label class="chip-radio"><input type="radio" name="kind" value="quick log" checked><span>Quick log</span></label>
+      <label class="chip-radio"><input type="radio" name="kind" value="daily journal"><span>Daily journal</span></label>
+    </div>
+    <div class="form-actions">
+      <button type="button" class="btn ghost" data-action="dict-toggle" id="dict-toggle">Pause</button>
+      <button type="button" class="btn primary" data-action="dict-save">Save to journal</button>
+    </div>
+    <p class="small muted dict-note">Free, no account. Your phone's speech service turns speech into text (Google on Android, Apple on iPhone); this app stores only the text.</p>
+  </div>`;
+  sheet.classList.add('open');
+  const ta = $('#dict-text');
+  let base = ''; // text typed or fixed by hand stays; new speech is added after it
+  const fmt = (t) => ($('#dict-roman')?.checked ? speech.toRoman(t) : t);
+  dictation = new speech.Dictation({
+    lang,
+    onUpdate: (finalText, interim) => {
+      ta.value = (base ? base.replace(/\s*$/, ' ') : '') + fmt(finalText);
+      $('#dict-interim').textContent = interim ? fmt(interim) : '';
+    },
+    onState: (st) => {
+      const el = $('#dict-state'); if (!el) return;
+      const btn = $('#dict-toggle');
+      el.dataset.state = st;
+      el.innerHTML = `<i></i>${st === 'listening' ? 'Listening' : st === 'denied' ? 'Microphone blocked' : st === 'network' ? 'No connection' : 'Paused'}`;
+      if (btn) btn.textContent = st === 'listening' ? 'Pause' : 'Resume';
+      if (st === 'denied') toast('Allow the microphone for this site in your browser settings.');
+      if (st === 'network') toast('Speech-to-text needs internet. Your text so far is kept.');
+    },
+  });
+  ta.addEventListener('input', () => { base = ta.value; dictation.finalText = ''; });
+  dictation.resume = () => { base = ta.value; dictation.finalText = ''; dictation.start(); };
+  for (const r of sheet.querySelectorAll('input[name="dlang"]')) r.addEventListener('change', () => { lsSet('dictLang', r.value); base = ta.value; dictation.finalText = ''; dictation.setLang(r.value); });
+  $('#dict-roman').addEventListener('change', (e) => { lsSet('dictRoman', e.target.checked); if (e.target.checked) { ta.value = speech.toRoman(ta.value); base = ta.value; dictation.finalText = ''; } });
+  try { dictation.start(); } catch { closeSheet(); openRecorder(); }
+}
+function stopDictation() { if (dictation) { dictation.pause(); dictation = null; } }
+
 async function openRecorder() {
   closeSheet();
   if (!Recorder.supported()) { toast('This browser cannot record audio.'); return; }
@@ -1993,7 +2069,26 @@ document.addEventListener('click', async (e) => {
   switch (a) {
     case 'quick-add': openQuickAdd(); break;
     case 'close-sheet': closeSheet(); break;
-    case 'record': openRecorder(); break;
+    case 'record': openDictation(); break;
+    case 'record-audio': openRecorder(); break;
+    case 'dict-toggle': {
+      if (!dictation) break;
+      if (dictation.active) dictation.pause(); else dictation.resume();
+      break;
+    }
+    case 'dict-save': {
+      const ta = $('#dict-text');
+      const text = (ta?.value || '').trim();
+      const kind = document.querySelector('#sheet input[name="kind"]:checked')?.value || 'quick log';
+      stopDictation();
+      if (!text) { toast('Nothing to save yet.'); break; }
+      closeSheet();
+      const rec = await db.create('journal', { at: localStamp(), kind, text, status: 'typed' });
+      toast('Saved to journal', { undo: true });
+      if (currentRoute.name === 'journal') render();
+      void rec;
+      break;
+    }
     case 'rec-stop': stopRecorder(true); break;
     case 'rec-cancel': stopRecorder(false); break;
     case 'undo': {
