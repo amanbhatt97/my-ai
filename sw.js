@@ -1,5 +1,5 @@
 // Offline support: the app shell is cached; API calls always go to the network.
-const CACHE = 'life-v4';
+const CACHE = 'life-v5';
 const SHELL = [
   './', './index.html', './css/app.css', './manifest.webmanifest', './icon.svg',
   './js/app.js', './js/db.js', './js/sync.js', './js/crypto.js', './js/schemas.js', './js/journal.js', './js/gmail.js',
@@ -22,7 +22,8 @@ self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET' || url.origin !== location.origin) return;
   // network first so updates arrive quickly; fall back to cache offline
   e.respondWith(
-    fetch(e.request)
+    // no-cache: always revalidate with GitHub Pages instead of trusting the browser's 10-minute cache
+    fetch(e.request, { cache: 'no-cache' })
       .then((res) => {
         const copy = res.clone();
         caches.open(CACHE).then((c) => c.put(e.request, copy));
