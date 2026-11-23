@@ -373,6 +373,7 @@ async function viewNow() {
     <input name="q" type="text" placeholder="Add, find or ask anything…" aria-label="Add, find or ask anything" autocomplete="off">
     <button type="button" class="mic" data-action="record" aria-label="Speak">${icon('mic', 18)}</button>
   </form>
+  <div id="capture-results" class="capture-results" hidden></div>
   ${hint}
   <div class="grid-2">
     <section class="block" aria-label="Today">
@@ -1079,10 +1080,12 @@ async function viewRecord(id, tab = 'view') {
     <span class="label">${esc(statusField.label)}</span>
     <div class="chips status-chips" role="group" aria-label="${esc(statusField.label)}">${statusField.options.map((o) => `<button type="button" class="chip ${r.data[m.status] === o ? 'on' : ''}" data-action="set-status" data-id="${id}" data-v="${esc(o)}" aria-pressed="${r.data[m.status] === o}">${esc(o)}</button>`).join('')}</div>
   </section>` : ''}
-  ${countdowns.length ? `<div class="countdowns">${countdowns.map(({ fd, days }) => `<div class="cd ${days < 0 ? 'late' : days <= (fd.remind || 0) ? 'soon' : ''}">
-      <span class="cd-v">${days < 0 ? -days : days}<small>${Math.abs(days) === 1 ? 'day' : 'days'}</small></span>
-      <span class="mono cd-k">${esc(fd.label)} · ${days < 0 ? 'overdue' : days === 0 ? 'today' : 'left'}</span>
-    </div>`).join('')}</div>` : ''}
+  ${countdowns.length ? `<div class="countdowns">${countdowns.map(({ fd, days }) => {
+    const cls = days < 0 ? 'late' : days <= (fd.remind || 0) ? 'soon' : '';
+    const v = days < 0 ? `${-days}d late` : days === 0 ? 'Today' : `${days} ${days === 1 ? 'day' : 'days'}`;
+    const inner = `<span class="cd-v">${v}</span><span class="cd-k">${esc(fd.label)}</span>${fd.yearly ? '' : '<span class="cd-act">Update</span>'}`;
+    return fd.yearly || deleted ? `<div class="cd ${cls}">${inner}</div>` : `<button type="button" class="cd ${cls}" data-action="renew" data-id="${id}" data-k="${fd.k}" aria-label="Update ${esc(fd.label)}">${inner}</button>`;
+  }).join('')}</div>` : ''}
   ${isJournal ? `<section class="block"><span class="label">Entry</span><p class="prose big">${esc(r.data.text || statusText(r.data.status) || 'Empty entry')}</p></section>${journalExtras(r)}` : ''}
   ${filled.length ? `<section class="block"><span class="label">Details</span><dl class="spec">${filled.map((fd) => `<div><dt>${esc(fd.label)}</dt><dd>${valueHtml(fd, r.data[fd.k], r)}</dd></div>`).join('')}</dl></section>` : ''}
   ${longs.map((fd) => `<section class="block"><span class="label">${esc(fd.label)}</span><p class="prose">${esc(r.data[fd.k])}</p></section>`).join('')}
@@ -1247,13 +1250,45 @@ async function viewSettings() {
 
 // ── quick add sheet ─────────────────────────────────────────────────────
 const QUICK = ['tasks', 'journal', 'jobs', 'ideas', 'people', 'decisions', 'wins', 'notes'];
+// Understands "today", "tonight", "tomorrow", weekday names, "in 3 days", "next week".
+function parseWhen(text) {
+  const t0 = startOfToday();
+  const iso = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const add = (n) => { const d = new Date(t0); d.setDate(d.getDate() + n); return d; };
+  const days = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+  const rules = [
+    [/\b(today|tonight)\b/i, () => add(0)],
+    [/\btomorrow\b/i, () => add(1)],
+    [/\bday after tomorrow\b/i, () => add(2)],
+    [/\bnext week\b/i, () => add(7)],
+    [/\bin (\d{1,3}) days?\b/i, (m) => add(Number(m[1]))],
+    [/\b(?:on |by |this )?(sun|mon|tue|wed|thu|fri|sat)[a-z]*\b/i, (m) => { const want = days.indexOf(m[1].toLowerCase()); let n = (want - t0.getDay() + 7) % 7; if (n === 0) n = 7; return add(n); }],
+  ];
+  for (const [re, fn] of rules) {
+    const m = text.match(re);
+    if (m) {
+      const d = fn(m);
+      const title = text.replace(m[0], '').replace(/\s{2,}/g, ' ').replace(/^[\s,.-]+|[\s,.-]+$/g, '');
+      return { title: title || text, due: iso(d), days: diffDays(d, t0) };
+    }
+  }
+  return { title: text, due: '', days: null };
+}
+
 function openQuickAdd(preset = 'tasks', text = '') {
   const sheet = $('#sheet');
+  const when = text ? parseWhen(text) : { title: '', due: '' };
+  if (when.due) text = when.title;
   sheet.innerHTML = `<div class="sheet-card" role="dialog" aria-modal="true" aria-label="Quick add">
     <div class="grab"></div>
     <form data-form="quick">
       <label for="q-text" class="label">Add</label>
       <textarea id="q-text" name="text" rows="2" placeholder="Type anything…" required>${esc(text)}</textarea>
+      <div class="when-row" id="q-when" ${when.due ? '' : 'hidden'}>
+        <span class="small muted">Due</span>
+        <input type="date" name="due" value="${esc(when.due || '')}" aria-label="Due date">
+        <button type="button" class="link" data-action="clear-due">Clear</button>
+      </div>
       <div class="chips" role="radiogroup" aria-label="Type">
         ${QUICK.map((id) => `<label class="chip-radio"><input type="radio" name="module" value="${id}" ${id === preset ? 'checked' : ''}><span>${esc(MODULE[id].name.replace('Job applications', 'Job'))}</span></label>`).join('')}
         <a class="chip" href="#/life" data-action="close-sheet">More…</a>
@@ -1267,6 +1302,28 @@ function openQuickAdd(preset = 'tasks', text = '') {
   sheet.classList.add('open');
   setTimeout(() => $('#q-text')?.focus(), 50);
 }
+function openRenew(id, k) {
+  const r = db.get(id);
+  if (!r) return;
+  const fd = MODULE[r.module].fields.find((x) => x.k === k);
+  const cur = r.data[k];
+  const sheet = $('#sheet');
+  sheet.innerHTML = `<div class="sheet-card" role="dialog" aria-modal="true" aria-label="Update ${esc(fd.label)}">
+    <div class="grab"></div>
+    <span class="label">${esc(titleOf(r))}</span>
+    <h2 class="sheet-title">${esc(fd.label)}</h2>
+    <p class="small muted">${cur ? `Currently ${fmtDay(cur)} · ${rel(diffDays(parseDay(cur), startOfToday()))}` : 'Not set'}. Renewed it? Move it forward:</p>
+    <div class="renew-grid">
+      ${[[1, '+1 month'], [3, '+3 months'], [6, '+6 months'], [12, '+1 year']].map(([mth, l]) => `<button type="button" class="btn" data-action="renew-by" data-id="${id}" data-k="${k}" data-m="${mth}">${l}</button>`).join('')}
+    </div>
+    <form data-form="renew" data-id="${id}" data-k="${k}" class="renew-custom">
+      <input type="date" name="date" value="${esc(cur || '')}" aria-label="New date" required>
+      <button type="submit" class="btn primary">Set date</button>
+    </form>
+  </div>`;
+  sheet.classList.add('open');
+}
+
 function closeSheet() { const s = $('#sheet'); s.classList.remove('open'); s.innerHTML = ''; }
 
 // ── recorder sheet ──────────────────────────────────────────────────────
@@ -1442,6 +1499,30 @@ document.addEventListener('click', async (e) => {
       toast('Updated', { undo: true });
       break;
     }
+    case 'capture-add': {
+      const inp = document.querySelector('form.capture input');
+      if (inp && inp.value.trim()) openQuickAdd('tasks', inp.value.trim());
+      break;
+    }
+    case 'clear-due': {
+      const row = $('#q-when');
+      if (row) { row.querySelector('input').value = ''; row.hidden = true; }
+      break;
+    }
+    case 'renew': openRenew(id, el.dataset.k); break;
+    case 'renew-by': {
+      const r = db.get(id);
+      const k = el.dataset.k;
+      const months = Number(el.dataset.m);
+      const cur = r.data[k] ? parseDay(r.data[k]) : startOfToday();
+      const base = cur < startOfToday() ? startOfToday() : cur; // overdue renews from today
+      base.setMonth(base.getMonth() + months);
+      const v = `${base.getFullYear()}-${pad(base.getMonth() + 1)}-${pad(base.getDate())}`;
+      await db.update(id, { [k]: v });
+      closeSheet();
+      toast(`${MODULE[r.module].fields.find((x) => x.k === k).label}: ${fmtDay(v)}`, { undo: true });
+      break;
+    }
     case 'gmail-ignore': await gmail.ignore(el.dataset.msg); render(); break;
     case 'gmail-reset': await gmail.resetScan(); toast('Next scan starts from scratch.'); break;
     case 'starter-links': {
@@ -1490,6 +1571,23 @@ document.addEventListener('input', (e) => {
     $('#list').innerHTML = listHtml(m, e.target.dataset.status, e.target.value);
   }
   if (e.target.id === 'global-q') $('#search-results').innerHTML = searchHtml(e.target.value);
+  if (e.target.matches('form.capture input')) {
+    const box = $('#capture-results');
+    const q = e.target.value.trim();
+    if (!box) return;
+    if (q.length < 2) { box.hidden = true; box.innerHTML = ''; return; }
+    const ql = q.toLowerCase();
+    const when = parseWhen(q);
+    const words = when.title.toLowerCase().split(/\W+/).filter((w) => w.length >= 3);
+    const score = (r) => {
+      const t = titleOf(r).toLowerCase();
+      if (t.includes(ql) || JSON.stringify(r.data).toLowerCase().includes(ql)) return 3;
+      return words.some((w) => t.split(/\W+/).includes(w)) ? 1 : 0;
+    };
+    const hits = db.all().filter((r) => MODULE[r.module]).map((r) => [score(r), r]).filter(([n]) => n).sort((a, b) => b[0] - a[0]).slice(0, 5).map(([, r]) => r);
+    box.hidden = false;
+    box.innerHTML = `<button type="button" class="cr-add" data-action="capture-add">${icon('plus', 16)}<span>Add “${esc(when.title)}”${when.due ? ` <em>· due ${esc(rel(when.days))}</em>` : ''}</span><kbd>Enter</kbd></button>${hits.map((r) => row(r, { showModule: true })).join('')}`;
+  }
 });
 
 document.addEventListener('submit', async (e) => {
@@ -1521,6 +1619,13 @@ document.addEventListener('submit', async (e) => {
       // "?something" or a match in your data → search; otherwise add it
       if (q.startsWith('?')) { location.hash = '#/search'; setTimeout(() => { const i = $('#global-q'); if (i) { i.value = q.slice(1).trim(); i.dispatchEvent(new Event('input', { bubbles: true })); } }, 60); return; }
       openQuickAdd('tasks', q);
+    } else if (kind === 'renew') {
+      const v = form.elements.date.value;
+      if (!v) return;
+      const r = db.get(form.dataset.id);
+      await db.update(form.dataset.id, { [form.dataset.k]: v });
+      closeSheet();
+      toast(`${MODULE[r.module].fields.find((x) => x.k === form.dataset.k).label}: ${fmtDay(v)}`, { undo: true });
     } else if (kind === 'quick') {
       const text = form.elements.text.value.trim();
       const id = form.elements.module.value;
@@ -1529,10 +1634,17 @@ document.addEventListener('submit', async (e) => {
       const data = { ...defaults(id) };
       if (id === 'journal') Object.assign(data, { at: localStamp(), text, status: 'typed' });
       else data[titleKey(m)] = text;
-      if (id === 'tasks' && !data.status) data.status = 'today';
+      if (id === 'tasks') {
+        const due = form.elements.due?.value || '';
+        if (due) {
+          data.due = due;
+          const dd = diffDays(parseDay(due), startOfToday());
+          data.status = dd <= 0 ? 'today' : dd <= 7 ? 'this week' : 'later';
+        } else if (!data.status) data.status = 'today';
+      }
       const rec = await db.create(id, data);
       closeSheet();
-      toast(`Added to ${m.name}`, { undo: true });
+      toast(id === 'tasks' && data.due ? `Task added · due ${rel(diffDays(parseDay(data.due), startOfToday()))}` : `Added to ${m.name}`, { undo: true });
       if (!['tasks', 'journal', 'ideas'].includes(id)) go(`#/r/${rec.id}`);
     } else if (kind === 'sync') {
       const fd = Object.fromEntries(new FormData(form));
