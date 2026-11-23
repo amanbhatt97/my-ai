@@ -1067,8 +1067,8 @@ async function calendarCard(cal, t) {
 function lifeHtml() {
   const recent = db.all().filter((r) => MODULE[r.module]).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 5);
   const ago = (iso) => { const m = (Date.now() - Date.parse(iso)) / 6e4; return m < 60 ? `${Math.max(1, Math.round(m))}m` : m < 1440 ? `${Math.round(m / 60)}h` : m < 2880 ? 'Yesterday' : fmtDay(iso.slice(0, 10)); };
-  return `<section class="block" id="life" aria-label="Life">
-    <h2 class="section-title">Life</h2>
+  return `<section class="block" id="life" aria-label="Everything">
+    <h2 class="section-title">Everything</h2>
     <div class="rooms">${ROOMS.map((room) => {
       const late = roomReminders(room).filter((x) => x.days < 0).length;
       const [f1, f2] = roomFact(room);
@@ -1366,7 +1366,7 @@ function startCard(m) {
 
 async function viewModule(id, filter = '') {
   const m = MODULE[id];
-  if (!m) return emptyState('Unknown section.', '#/life', 'Back to Life');
+  if (!m) return emptyState('Unknown section.', '#/life', 'Back home');
   const statusField = m.status && m.fields.find((x) => x.k === m.status);
   const counts = {};
   if (statusField) for (const r of db.list(id)) counts[r.data[m.status]] = (counts[r.data[m.status]] || 0) + 1;
@@ -1460,7 +1460,7 @@ function missingRequired(m, data) {
 async function viewNew(idWithQuery) {
   const [id, qs] = (idWithQuery || '').split('?');
   const m = MODULE[id];
-  if (!m) return emptyState('Unknown section.', '#/life', 'Back to Life');
+  if (!m) return emptyState('Unknown section.', '#/life', 'Back home');
   const data = defaults(id);
   if (qs) for (const [k, v] of new URLSearchParams(qs)) data[k] = v;
   if (id === 'journal') { data.at = localStamp(); data.status = 'typed'; }
@@ -1500,7 +1500,7 @@ const isEmpty = (v) => v === undefined || v === null || v === '' || (Array.isArr
 
 async function viewRecord(id, tab = 'view') {
   const r = db.get(id);
-  if (!r) return emptyState('This item no longer exists.', '#/life', 'Back to Life');
+  if (!r) return emptyState('This item no longer exists.', '#/life', 'Back home');
   const m = MODULE[r.module];
   const deleted = !!r.deletedAt;
   const isJournal = r.module === 'journal';

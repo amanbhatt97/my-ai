@@ -29,5 +29,5 @@ export function homeOf(moduleId) {
   const r = MOD_ROOM[moduleId];
   if (r) return { name: r.name, href: `#/room/${r.id}` };
   if (PLAN_MODULES.includes(moduleId)) return { name: 'Plan', href: '#/plan' };
-  return { name: 'Life', href: '#/life' };
+  return { name: 'Home', href: '#/now' };
 }

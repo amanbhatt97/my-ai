@@ -1,4 +1,4 @@
-# Life
+# AI Assistant
 
 A private, phone-first life tracker. Tasks, goals, reviews, decisions, jobs, health, money, things you own, documents, people, trips, a voice journal in Hinglish, and more: 48 sections, all searchable, all with full change history and undo.
 
@@ -67,7 +67,7 @@ The app reads your inbox **read-only**, right in your browser. It finds applicat
 
 One-time Google setup (about 10 minutes):
 
-1. Go to [console.cloud.google.com](https://console.cloud.google.com/) and create a project (e.g. "Life").
+1. Go to [console.cloud.google.com](https://console.cloud.google.com/) and create a project (e.g. "AI Assistant").
 2. APIs & Services → Library → enable **Gmail API**, **Google Calendar API**, **Google Drive API** and **Google Tasks API**.
 3. APIs & Services → **OAuth consent screen** → External. Fill in the app name and your email. Add the scopes `.../auth/gmail.readonly`, `.../auth/calendar.events` `.../auth/drive.metadata.readonly` (read-only, names only) and `.../auth/tasks`. Under **Test users**, add your Gmail address. Leave the app in *Testing*.
 4. APIs & Services → **Credentials** → Create credentials → **OAuth client ID** → Web application. Under *Authorized JavaScript origins*, add `https://<username>.github.io`. Create it and copy the **Client ID**.

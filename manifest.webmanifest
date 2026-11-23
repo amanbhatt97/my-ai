@@ -1,6 +1,6 @@
 {
-  "name": "Life",
-  "short_name": "Life",
+  "name": "AI Assistant",
+  "short_name": "Assistant",
   "description": "Private life tracker",
   "start_url": "./#/now",
   "scope": "./",

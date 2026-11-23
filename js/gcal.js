@@ -75,7 +75,7 @@ function eventBody(rec, fd) {
   const appLink = `${location.origin}${location.pathname}#/r/${rec.id}`;
   const body = {
     summary,
-    description: `From your Life tracker: ${appLink}`,
+    description: `From your AI Assistant: ${appLink}`,
     start: { date },
     end: { date: nextDay(date) },
     transparency: 'transparent',
@@ -190,7 +190,7 @@ export async function addTaskEvent(id) {
   const date = t.data.due || new Date(Date.now() - new Date().getTimezoneOffset() * 6e4).toISOString().slice(0, 10);
   const body = {
     summary: t.data.title,
-    description: `Task from your Life tracker: ${location.origin}${location.pathname}#/r/${t.id}${t.data.notes ? `\n\n${t.data.notes}` : ''}`,
+    description: `Task from your AI Assistant: ${location.origin}${location.pathname}#/r/${t.id}${t.data.notes ? `\n\n${t.data.notes}` : ''}`,
     start: { date }, end: { date: nextDay(date) },
     reminders: { useDefault: false, overrides: [{ method: 'popup', minutes: 0 }] },
     extendedProperties: { private: { lifeId: t.id, lifeField: 'task' } },
