@@ -60,7 +60,7 @@ function applyTheme(t) {
   if (t === 'system') document.documentElement.removeAttribute('data-theme');
   else document.documentElement.setAttribute('data-theme', t);
   const light = t === 'light' || (t === 'system' && matchMedia('(prefers-color-scheme: light)').matches);
-  document.querySelector('meta[name="theme-color"]').setAttribute('content', light ? '#f5f6f3' : '#07080a');
+  document.querySelector('meta[name="theme-color"]').setAttribute('content', light ? '#eef1f4' : '#05060a');
 }
 
 // ── time progress (day / week / year) ──────────────────────────────────
@@ -231,12 +231,26 @@ async function viewNow() {
   const lastEntry = db.list('journal').sort((a, b) => (b.data.at || '').localeCompare(a.data.at || ''))[0];
   const mailCount = (await gmail.suggestions()).length;
   const weekGoals = db.list('goals').filter((r) => r.data.horizon === 'week' && r.data.status !== 'dropped');
+  const doneToday = db.list('tasks').filter((r) => r.data.completedOn === t).length;
+  const taskTotal = tasks.length + doneToday;
+  const habitsDone = habits.filter((h) => (h.data.log || {})[t]).length;
+  const denom = taskTotal + habits.length;
+  const score = denom ? Math.round(((doneToday + habitsDone) / denom) * 100) : 0;
 
   return `${header('Now', {
     kicker,
     actions: `<a class="icon-btn" href="#/progress" aria-label="Progress">${icon('chart')}</a><a class="icon-btn" href="#/search" aria-label="Search">${icon('search')}</a><a class="icon-btn" href="#/settings" aria-label="Settings">${icon('gear')}</a>`,
   })}
-  <div class="tp" aria-label="Time elapsed">${timeProgress().map(([k, v]) => `<div class="tp-item"><span class="mono">${k.toUpperCase()}</span><span class="tp-bar"><span style="width:${v}%"></span></span><span class="mono">${v}%</span></div>`).join('')}</div>
+  <section class="hero" aria-label="Today at a glance">
+    <div class="ring" style="--p:${score}" role="img" aria-label="${score}% of today's tasks and habits done">
+      <div class="ring-in"><span class="ring-v">${score}<small>%</small></span><span class="ring-k mono">TODAY</span></div>
+    </div>
+    <div class="hero-side">
+      <div class="hero-kv"><span class="mono">TASKS</span><span class="hv">${doneToday}<small>/${taskTotal}</small></span></div>
+      <div class="hero-kv"><span class="mono">HABITS</span><span class="hv">${habitsDone}<small>/${habits.length}</small></span></div>
+      <div class="tp" aria-label="Time elapsed">${timeProgress().map(([k, v]) => `<div class="tp-item"><span class="mono">${k.toUpperCase()}</span><span class="tp-bar"><span style="width:${v}%"></span></span><span class="mono">${v}%</span></div>`).join('')}</div>
+    </div>
+  </section>
   ${setupCard()}
   ${mailCount ? `<a class="setup-card" href="#/inbox"><span class="mono small">GMAIL · ${mailCount}</span><span class="setup-next">Job updates to review</span></a>` : ''}
   ${pinnedLinks()}
@@ -550,7 +564,7 @@ async function viewJournal() {
     if (!byDay.has(k)) byDay.set(k, []);
     byDay.get(k).push(e);
   }
-  return `${header('Journal', { kicker: `${entries.length} ENTRIES` })}
+  return `${header('Journal', { kicker: `${entries.length} ${entries.length === 1 ? 'ENTRY' : 'ENTRIES'}` })}
   <section class="block center">
     <button type="button" class="mic-big" data-action="record" aria-label="Record a voice entry">${icon('mic', 34)}</button>
     <p class="muted small">Speak in Hindi, English or both. Saved with date and time.</p>
@@ -653,7 +667,7 @@ function formFields(m, data) {
   };
   const primary = [];
   const extra = [];
-  visible.forEach((fd, i) => ((i < 4 || fd.req || hasVal(fd) || fd.readonly) ? primary : extra).push(fd));
+  visible.forEach((fd, i) => ((i < 4 || fd.req || hasVal(fd) || fd.readonly || fd.remind !== undefined) ? primary : extra).push(fd));
   return `${primary.map((fd) => fieldHtml(fd, data[fd.k])).join('')}
     ${extra.length ? `<details class="more"><summary>More details <span class="mono small muted">${extra.length}</span></summary><div class="form">${extra.map((fd) => fieldHtml(fd, data[fd.k])).join('')}</div></details>` : ''}`;
 }
