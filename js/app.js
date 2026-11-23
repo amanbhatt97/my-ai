@@ -268,13 +268,12 @@ const isWide = () => matchMedia('(min-width: 1000px)').matches;
 function splitFor({ name, parts }) {
   if (!isWide()) return null;
   const placeholder = async () => `<div class="pane-empty"><p>Select something on the left to see it here.</p></div>`;
-  if (name === 'room' && ROOM[parts[0]]) return { left: () => viewRoom(parts[0]), right: placeholder };
+  // rooms are dashboards: on a wide screen they use the full width (two columns), not a split
   if (name === 'm' && MODULE[parts[0]]) return { left: () => viewModule(parts[0], parts[1] || ''), right: placeholder };
   if (name === 'r' && !parts[1]) {
     const r = db.get(parts[0]);
     if (!r || !MODULE[r.module]) return null;
-    const room = roomOf(r.module);
-    return { left: () => (room ? viewRoom(room.id) : viewModule(r.module)), right: () => viewRecord(parts[0]) };
+    return { left: () => viewModule(r.module), right: () => viewRecord(parts[0]) };
   }
   return null;
 }
@@ -377,7 +376,7 @@ function backFor(route) {
   if (name === 'drive-travel') return { name: 'Travel', href: '#/room/travel' };
   if (name === 'progress' || name === 'review') return { name: 'Plan', href: '#/plan' };
   if (['settings', 'setup', 'trash'].includes(name)) return { name: 'Home', href: '#/now' };
-  return null;
+  return name === 'now' || name === 'life' ? null : { name: 'Home', href: '#/now' };
 }
 
 function header(title, { kicker = '', back = null, actions = '', sub = '' } = {}) {
@@ -499,67 +498,59 @@ async function viewNow() {
 
   const habitsDone = habits.filter((h) => (h.data.log || {})[t]).length;
   const setUp = !!(await google.clientId());
+  // today's calendar events join the same list
+  for (const e of todayEvents.filter((x) => !x.mine)) {
+    const time = e.allDay ? 'All day' : new Date(e.start).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false });
+    items.push({ o: 2, k: e.start, html: `<li><span class="when strong">${esc(time)}</span><span class="dot" style="--c:#FF3B30"></span><a class="what" href="${esc(e.link || '#')}" target="_blank" rel="noopener"><span>${esc(e.title)}</span></a></li>` });
+  }
+  items.sort((a, b) => a.o - b.o || String(a.k || '').localeCompare(String(b.k || '')));
   const roomTile = (room) => {
     const late = roomReminders(room).filter((x) => x.days < 0).length;
     const [f1] = roomFact(room);
     const urgent = roomReminders(room).find((x) => x.days <= 14);
     return `<a class="tile" href="#/room/${room.id}" style="--c:${room.color}">
       <span class="tile-head"><span class="tile-ico">${icon(room.icon || 'life', 16)}</span>${late ? `<span class="tile-badge">${late}</span>` : ''}</span>
-      <span class="tile-big" style="font-size:20px">${esc(room.name)}</span>
+      <span class="tile-big" style="font-size:19px">${esc(room.name)}</span>
       <span class="tile-fact ${urgent && urgent.days < 0 ? 'alert' : ''}">${esc(f1)}</span>
     </a>`;
   };
+  const calCard = await calendarCard(cal, t);
+  const googleLink = setUp && !autosync.connected() ? '<button type="button" class="link" data-action="google-connect">Connect Google</button>' : '';
   return `<header class="top home-top">
     <div class="home-row"><div class="kicker">${esc(now.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' }))}</div><a class="icon-btn" href="#/settings" aria-label="Settings">${icon('gear', 20)}</a></div>
     <h1>${headline}</h1>
   </header>
   <form class="capture" data-form="capture" role="search">
-    ${icon('search', 16)}<input name="q" type="text" placeholder="Add, find or ask anything" aria-label="Add, find or ask anything" autocomplete="off">
+    ${icon('search', 16)}<input name="q" type="text" placeholder="Search or add anything" aria-label="Search or add anything" autocomplete="off">
     <button type="button" class="mic" data-action="record" aria-label="Speak">${icon('mic', 18)}</button>
   </form>
   <div id="capture-results" class="capture-results" hidden></div>
-  ${hint}
-  <div class="bento">
-    <section class="tile span2 tall" aria-label="Today" style="--c:#007AFF;cursor:default">
-      <span class="tile-head"><span class="tile-ico">${icon('check', 16)}</span><span class="tile-name">Today</span><span class="small muted">${left ? `${left} left` : 'All clear'}${lateN ? ` · <b style="color:var(--danger)">${lateN} late</b>` : ''}</span></span>
-      ${items.length ? `<ul class="tl">${items.slice(0, 6).map((i) => i.html).join('')}</ul>` : '<p class="muted small">Nothing due. Enjoy the day.</p>'}
-      ${inlineAdd(MODULE.tasks)}
-    </section>
-    <section class="tile span2 cal-tile" style="--c:#FF3B30;cursor:default;min-height:0">${await calendarCard(cal, t)}</section>
-    <section class="tile" aria-label="Habits" style="--c:#34C759;cursor:default">
-      <span class="tile-head"><span class="tile-ico">${icon('track', 16)}</span><span class="tile-name">Habits</span><span class="small muted">${habits.length ? `${habitsDone}/${habits.length}` : ''}</span></span>
-      ${habits.length ? `<div class="tile-rings">${habits.slice(0, 6).map((h) => {
-        const on = !!(h.data.log || {})[t];
-        const st = streak(h.data.log || {});
-        return `<button type="button" class="ring-btn ${on ? 'on' : ''}" data-action="habit" data-id="${h.id}" aria-pressed="${on}" aria-label="${esc(h.data.name)}"><i>${st || '·'}</i><span>${esc(h.data.name)}</span></button>`;
-      }).join('')}</div>` : `<a class="tile-fact" href="#/m/habits" style="margin-top:auto">Add 3–5 habits to track daily</a>`}
-    </section>
-    <section class="tile" aria-label="Mood" style="--c:#FF2D55;cursor:default">
-      <span class="tile-head"><span class="tile-ico">${icon('health', 16)}</span><span class="tile-name">How's today?</span></span>
-      <div class="mood" role="group" aria-label="Mood today">${[1, 2, 3, 4, 5].map((n) => `<button type="button" data-action="mood" data-v="${n}" class="${mood === n ? 'on' : ''}" aria-pressed="${mood === n}">${n}</button>`).join('')}</div>
-    </section>
-    ${coming.length ? `<section class="tile span2" aria-label="Coming up" style="--c:#FF9500;min-height:0;cursor:default">
-      <span class="tile-head"><span class="tile-ico">${icon('now', 16)}</span><span class="tile-name">Coming up</span></span>
-      <ul class="simple">${coming.slice(0, 3).map((c) => c.html).join('')}</ul>
-    </section>` : ''}
-    ${ROOMS.map(roomTile).join('')}
-    <a class="tile" href="#/plan" style="--c:#5856D6">
-      <span class="tile-head"><span class="tile-ico">${icon('plan', 16)}</span><span class="tile-name">Plan</span></span>
-      <span class="tile-big" style="font-size:20px">${db.list('goals').filter((g) => g.data.horizon === 'week' && g.data.status !== 'dropped' && g.data.status !== 'achieved').length || 'No'} weekly goals</span>
-      <span class="tile-fact">Goals, reviews, decisions</span>
-    </a>
-    <a class="tile" href="#/journal" style="--c:#AF52DE">
-      <span class="tile-head"><span class="tile-ico">${icon('mic', 16)}</span><span class="tile-name">Journal</span></span>
-      <span class="tile-big" style="font-size:20px">${journaledToday ? 'Written today' : 'Speak or write'}</span>
-      <span class="tile-fact">${plural(db.list('journal').length, 'entry').replace('entrys', 'entries')}</span>
-    </a>
-  </div>
-  <ul class="simple more-list">
-    <li><a href="#/setup"><span class="l"><span>Set up guide</span></span><span class="r">${SETUP.filter(setupDone).length}/${SETUP.length}</span></a></li>
-    <li><a href="#/progress"><span class="l"><span>Progress & streaks</span></span><span class="r">›</span></a></li>
-    <li><a href="#/journal"><span class="l"><span>Journal</span></span><span class="r">›</span></a></li>
-    <li><a href="#/settings"><span class="l"><span>Settings</span></span><span class="r">›</span></a></li>
-  </ul>`;
+
+  <section class="block home-today" aria-label="Today">
+    <div class="label-row"><span class="label">Today</span>${googleLink}</div>
+    <div class="list">${items.length ? `<ul class="tl">${items.map((i) => i.html).join('')}</ul>` : '<p class="muted pad">Nothing due today.</p>'}</div>
+  </section>
+
+  ${habits.length ? `<section class="block" aria-label="Habits">
+    <div class="label-row"><span class="label">Habits</span><span class="small muted">${habitsDone} of ${habits.length} today</span></div>
+    <div class="habit-row-simple">${habits.map((h) => {
+      const on = !!(h.data.log || {})[t];
+      const st = streak(h.data.log || {});
+      return `<button type="button" class="ring-btn ${on ? 'on' : ''}" data-action="habit" data-id="${h.id}" aria-pressed="${on}" aria-label="${esc(h.data.name)}"><i>${on ? icon('check', 16) : st || ''}</i><span>${esc(h.data.name)}</span></button>`;
+    }).join('')}</div>
+  </section>` : ''}
+
+  ${hint ? `<section class="block">${hint}</section>` : ''}
+  ${calCard}
+
+  <section class="block" aria-label="Areas">
+    <span class="label">Everything you track</span>
+    <div class="bento">${ROOMS.map(roomTile).join('')}</div>
+  </section>
+
+  <nav class="home-links" aria-label="More">
+    <a href="#/plan">Plan</a><a href="#/journal">Journal</a><a href="#/progress">Progress</a><a href="#/setup">Set up</a><a href="#/settings">Settings</a>
+  </nav>`;
 }
 
 // ── suggestions: small nudges based on what's in the app ───────────────
@@ -1027,14 +1018,11 @@ async function calendarCard(cal, t) {
   const status = autosync.connected()
     ? `<button type="button" class="link sync-pill" data-action="google-sync" title="Sync Gmail, Calendar, Tasks and Drive now">${ago === null ? 'Syncing…' : ago < 60 ? `Synced ${ago}m ago` : 'Sync now'} ↻</button>`
     : `<button type="button" class="link" data-action="google-connect">Connect Google</button>`;
-  const head = `<div class="label-row"><span class="label">Calendar</span>${setUp ? status : ''}</div>`;
-  if (!setUp) return `<section class="block cal-card">${head}<a class="hint-card" href="#/settings"><span class="dot" style="--c:#7AA2FF"></span><span class="t"><b>Connect Google Calendar</b><span>See your events here, turn them into tasks, and send tasks to your calendar.</span></span>${icon('chev', 16)}</a></section>`;
-  if (!cal.at || !autosync.connected()) {
-    const cached = cal.at ? '' : '';
-    if (!cal.at) return `<section class="block cal-card">${head}<button type="button" class="hint-card" data-action="google-connect"><span class="dot" style="--c:#7AA2FF"></span><span class="t"><b>Connect Google</b><span>One tap: Calendar, Gmail job updates, Google Tasks and Drive travel stay in sync while the app is open.</span></span>${icon('chev', 16)}</button>${cached}</section>`;
-  }
+  const head = `<div class="label-row"><span class="label">Next on your calendar</span>${status}</div>`;
+  // Home stays quiet until Google is connected: the Today header carries the one "Connect Google" link
+  if (!setUp || !cal.at) return '';
   const t0 = startOfToday();
-  const upcoming = cal.events.filter((e) => (e.start || '').slice(0, 10) >= t && !e.mine).slice(0, 6);
+  const upcoming = cal.events.filter((e) => (e.start || '').slice(0, 10) > t && !e.mine).slice(0, 6); // today's are already in Today
   const madeTasks = new Set(db.list('tasks').map((x) => x.data.fromEvent).filter(Boolean));
   let last = '';
   const rows = upcoming.map((e) => {
@@ -1045,7 +1033,7 @@ async function calendarCard(cal, t) {
     const time = e.allDay ? 'All day' : new Date(e.start).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false });
     return `${head2}<li class="cal-ev"><span class="cal-time">${esc(time)}</span><a class="cal-title" href="${esc(e.link || '#')}" target="_blank" rel="noopener">${esc(e.title)}</a>${madeTasks.has(e.id) ? '<span class="pill ghost">task</span>' : `<button type="button" class="chip mini" data-action="event-task" data-eid="${esc(e.id)}" aria-label="Make a task from ${esc(e.title)}">+ Task</button>`}</li>`;
   }).join('');
-  return `<section class="block cal-card">${head}${rows ? `<ul class="cal">${rows}</ul>` : '<p class="muted small">Nothing on your calendar for the next two weeks.</p>'}</section>`;
+  return `<section class="block cal-card">${head}${rows ? `<ul class="cal">${rows}</ul>` : '<p class="muted small">Nothing else on your calendar for the next two weeks.</p>'}</section>`;
 }
 
 function lifeHtml() {
@@ -1084,32 +1072,147 @@ function collectionHref(m) {
   return m === 'journal' ? '#/journal' : m === 'links' ? '#/links' : `#/m/${m}`;
 }
 
+// ── visual building blocks (single series, room colour, labelled) ──────
+function hbars(rows, { fmt = (v) => v, total = null } = {}) {
+  const max = Math.max(1, ...rows.map((r) => r.value));
+  return `<div class="hbars">${rows.map((r) => `<div class="hb-row" title="${esc(r.label)}: ${esc(String(fmt(r.value)))}">
+    <span class="hb-label">${esc(r.label)}</span>
+    <span class="hb-track"><span class="hb-fill" style="width:${r.value ? Math.max(3, Math.round((r.value / max) * 100)) : 0}%"></span></span>
+    <span class="hb-val">${esc(String(fmt(r.value)))}${total ? `<small> ${Math.round((r.value / total) * 100)}%</small>` : ''}</span>
+  </div>`).join('')}</div>`;
+}
+function vbars(series, { caption = '' } = {}) {
+  const max = Math.max(1, ...series.map((x) => x.value));
+  return `<div class="vbars" role="img" aria-label="${esc(caption)}: ${series.map((x) => `${x.label} ${x.value}`).join(', ')}">${series.map((x, i) => `<div class="vb" title="${esc(x.label)}: ${x.value}">
+    <span class="vb-v ${series.length <= 6 || i === series.length - 1 || x.value === max ? '' : 'invisible'}">${x.value}</span>
+    <span class="vb-fill" style="height:${Math.round((x.value / max) * 100)}%"></span>
+    <span class="vb-l">${esc(x.label)}</span>
+  </div>`).join('')}</div>`;
+}
+function bigNums(pairs) {
+  return `<div class="bignums">${pairs.map(([k, v, cls]) => `<div class="bn"><b class="${cls || ''}">${esc(String(v))}</b><span>${esc(k)}</span></div>`).join('')}</div>`;
+}
+function heatmap(dayMap, weeks = 12) {
+  const t0 = startOfToday();
+  const start = new Date(t0); start.setDate(start.getDate() - (weeks * 7 - 1) - ((t0.getDay() + 6) % 7 === 6 ? 0 : 0));
+  const cells = [];
+  for (let i = 0; i < weeks * 7; i++) { const d = new Date(start); d.setDate(start.getDate() + i); const k = dayKey(d); cells.push(`<span class="${dayMap[k] ? 'on' : ''}" title="${fmtDay(k)}${dayMap[k] ? ` · ${dayMap[k]}` : ''}"></span>`); }
+  return `<div class="heat" style="grid-template-columns:repeat(${weeks}, minmax(0,1fr))">${cells.join('')}</div>`;
+}
+function monthStrip(events) {
+  const t0 = startOfToday();
+  const months = Array.from({ length: 12 }, (_, i) => { const d = new Date(t0.getFullYear(), t0.getMonth() + i, 1); return { y: d.getFullYear(), m: d.getMonth(), label: d.toLocaleDateString('en-IN', { month: 'short' }), items: [] }; });
+  for (const e of events) { const d = parseDay(e.date); const slot = months.find((x) => x.y === d.getFullYear() && x.m === d.getMonth()); if (slot) slot.items.push(e); }
+  return `<div class="mstrip">${months.map((x) => `<div class="ms ${x.items.length ? 'has' : ''}" title="${esc(x.items.map((e) => e.label).join(', '))}"><span class="ms-n">${x.items.length || ''}</span><span class="ms-l">${x.label}</span></div>`).join('')}</div>`;
+}
+const card = (title, body, extra = '') => `<section class="vcard"><div class="vc-head"><span>${esc(title)}</span>${extra}</div>${body}</section>`;
+const chipsOf = (arr) => `<div class="vchips">${arr.map((x) => `<span>${esc(x)}</span>`).join('')}</div>`;
+
+function roomDashboard(room) {
+  const t0 = startOfToday();
+  const rems = roomReminders(room).filter((x) => x.days <= 60);
+  const upcomingList = rems.length ? `<ul class="simple">${rems.slice(0, 4).map((x) => `<li><a href="#/r/${x.r.id}"><span class="l"><span>${esc(titleOf(x.r))} · ${esc(x.label)}</span></span><span class="r ${x.days < 0 ? 'late-t' : ''}">${x.days < 0 ? `${-x.days}d late` : rel(x.days)}</span></a></li>`).join('')}</ul>` : '';
+  const out = [];
+  switch (room.id) {
+    case 'career': {
+      const jobs = db.list('jobs');
+      const by = (st) => jobs.filter((j) => j.data.status === st).length;
+      const active = jobs.filter((j) => ['applied', 'screening', 'interview', 'offer'].includes(j.data.status)).length;
+      out.push(bigNums([['active', active], ['interviews', by('interview')], ['offers', by('offer')]]));
+      if (jobs.length) out.push(card('Pipeline', hbars([['To apply', by('to apply')], ['Applied', by('applied')], ['Screening', by('screening')], ['Interview', by('interview')], ['Offer', by('offer')], ['Rejected', by('rejected')], ['Ghosted', by('ghosted')]].filter(([, v], i) => v || i < 5).map(([label, value]) => ({ label, value })))));
+      const ws = weekStart(new Date());
+      const weeks = Array.from({ length: 8 }, (_, i) => { const s = new Date(ws); s.setDate(ws.getDate() - (7 - i) * 7); return { s, value: 0, label: i === 7 ? 'now' : `${s.getDate()}/${s.getMonth() + 1}` }; });
+      for (const j of jobs) { if (!j.data.appliedOn) continue; const w = weekStart(parseDay(j.data.appliedOn)).getTime(); const slot = weeks.find((x) => x.s.getTime() === w); if (slot) slot.value++; }
+      if (jobs.some((j) => j.data.appliedOn)) out.push(card('Applications per week', vbars(weeks, { caption: 'Applications per week' })));
+      break;
+    }
+    case 'money': {
+      const invested = sumOf('accounts', 'value'); const loans = sumOf('loans', 'outstanding');
+      out.push(bigNums([['invested', inr(invested)], ['loans', inr(loans), loans ? 'warn-t' : '']]));
+      const kinds = {};
+      for (const a of db.list('accounts')) kinds[a.data.kind || 'other'] = (kinds[a.data.kind || 'other'] || 0) + (Number(a.data.value) || 0);
+      const rows = Object.entries(kinds).filter(([, v]) => v).sort((a, b) => b[1] - a[1]).map(([label, value]) => ({ label: label[0].toUpperCase() + label.slice(1), value }));
+      if (rows.length) out.push(card('Where your money is', hbars(rows, { fmt: inr, total: invested })));
+      break;
+    }
+    case 'health': {
+      const moodBy = {};
+      for (const r of db.list('days')) if (r.data.mood) moodBy[r.data.date] = Number(r.data.mood);
+      const days30 = lastNDays(30);
+      const logged = days30.filter((d) => moodBy[dayKey(d)]);
+      out.push(bigNums([['avg mood · 30d', logged.length ? (logged.reduce((a, d) => a + moodBy[dayKey(d)], 0) / logged.length).toFixed(1) : '–'], ['medicines', db.list('medicines').length], ['records', db.list('medical').length]]));
+      if (logged.length) out.push(card('Mood · last 30 days', `<div class="mchart">${days30.map((d) => { const v = moodBy[dayKey(d)]; return `<span class="mcol" title="${fmtDay(dayKey(d))}: ${v || 'not logged'}">${v ? `<span class="mdot" style="bottom:${(v - 1) * 25}%"></span>` : ''}</span>`; }).join('')}</div>`));
+      const habits = db.list('habits').filter((h) => h.data.active !== false);
+      if (habits.length) { const m = {}; for (const h of habits) for (const k of Object.keys(h.data.log || {})) m[k] = (m[k] || 0) + 1; out.push(card('Habits · 12 weeks', heatmap(m))); }
+      break;
+    }
+    case 'people': {
+      const ppl = db.list('people');
+      const bdays = ppl.filter((p) => p.data.birthday).map((p) => { const b = parseDay(p.data.birthday); const d = new Date(t0.getFullYear(), b.getMonth(), b.getDate()); if (d < t0) d.setFullYear(d.getFullYear() + 1); return { p, days: diffDays(d, t0), d }; }).sort((a, b) => a.days - b.days);
+      out.push(bigNums([['people', ppl.length], ['birthdays this month', bdays.filter((x) => x.d.getMonth() === t0.getMonth() && x.days <= 31).length]]));
+      if (bdays.length) out.push(card('Next birthdays', `<div class="bstrip">${bdays.slice(0, 6).map((x) => `<a href="#/r/${x.p.id}" class="bs"><b>${x.days === 0 ? 'Today' : x.days}</b><span>${x.days === 0 ? '' : x.days === 1 ? 'day' : 'days'}</span><em>${esc(x.p.data.name)}</em></a>`).join('')}</div>`));
+      const quiet = ppl.filter((p) => p.data.lastContact).map((p) => ({ p, ago: diffDays(t0, parseDay(p.data.lastContact)) })).sort((a, b) => b.ago - a.ago).slice(0, 4);
+      if (quiet.length) out.push(card("Haven't talked in a while", `<ul class="simple">${quiet.map((x) => `<li><a href="#/r/${x.p.id}"><span class="l"><span>${esc(x.p.data.name)}</span></span><span class="r">${x.ago} days</span></a></li>`).join('')}</ul>`));
+      break;
+    }
+    case 'home': {
+      out.push(bigNums([['vehicles', db.list('vehicles').length], ['documents', db.list('documents').length], ['things', db.list('possessions').length]]));
+      const ev = [];
+      for (const m of room.modules) for (const r of db.list(m)) for (const c of countdownsOf(r)) if (c.days >= 0 && c.days <= 365) { const d = new Date(t0); d.setDate(d.getDate() + c.days); ev.push({ date: dayKey(d), label: `${titleOf(r)}: ${c.fd.label}` }); }
+      if (ev.length) out.push(card('Renewals · next 12 months', monthStrip(ev)));
+      break;
+    }
+    case 'learning': {
+      const books = db.list('books');
+      out.push(bigNums([['reading', books.filter((b) => b.data.status === 'reading').length], ['finished', books.filter((b) => b.data.status === 'done').length], ['courses', db.list('courses').length]]));
+      const reading = books.filter((b) => b.data.status === 'reading');
+      if (reading.length) out.push(card('Reading now', chipsOf(reading.map((b) => b.data.title))));
+      break;
+    }
+    case 'travel': {
+      const trips = db.list('trips');
+      const countries = new Set(trips.map((x) => (x.data.country || x.data.place || '').trim()).filter(Boolean));
+      out.push(bigNums([['places visited', countries.size], ['trips', trips.length], ['to go', db.list('travelwish').length]]));
+      const years = {};
+      for (const x of trips) if (x.data.from) { const y = x.data.from.slice(0, 4); years[y] = (years[y] || 0) + 1; }
+      const ys = Object.keys(years).sort().slice(-6);
+      if (ys.length > 1) out.push(card('Trips per year', vbars(ys.map((y) => ({ label: y, value: years[y] })), { caption: 'Trips per year' })));
+      if (trips.length) out.push(card('Been to', chipsOf(trips.map((x) => x.data.place))));
+      if (db.list('travelwish').length) out.push(card('Want to go', chipsOf(db.list('travelwish').map((x) => x.data.place))));
+      break;
+    }
+    case 'me': {
+      const m = {};
+      for (const r of db.list('journal')) { const k = (r.data.at || '').slice(0, 10); if (k) m[k] = (m[k] || 0) + 1; }
+      let st = 0; const d = new Date(t0); if (!m[dayKey(d)]) d.setDate(d.getDate() - 1); while (m[dayKey(d)]) { st++; d.setDate(d.getDate() - 1); }
+      out.push(bigNums([['journal streak', `${st}d`], ['entries', db.list('journal').length], ['links', db.list('links').length]]));
+      if (Object.keys(m).length) out.push(card('Journal · 12 weeks', heatmap(m)));
+      break;
+    }
+  }
+  if (upcomingList) out.push(card('Coming up', upcomingList));
+  return out.join('');
+}
+
 async function viewRoom(id) {
   const room = ROOM[id];
-  if (!room) return emptyState('Unknown room.', '#/life', 'Back to Life');
-  const attn = roomReminders(room).filter((x) => x.days <= Math.max(x.r ? 30 : 0, 30)).slice(0, 4);
-  return `<nav class="room-switch" aria-label="Rooms">${ROOMS.map((x) => `<a href="#/room/${x.id}" class="${x.id === id ? 'on' : ''}" style="--c:${x.color}" ${x.id === id ? 'aria-current="page"' : ''}><span class="dot" style="--c:${x.color}"></span>${esc(x.name)}</a>`).join('')}</nav>
-  <div class="room-head" style="--c:${room.color}">
-    ${header(room.name, { back: { name: 'Home', href: '#/now' } })}
-    <div class="kpis">${roomKpis(room).map(([k, v]) => `<div class="kpi"><span>${esc(k)}</span><b>${esc(String(v))}</b></div>`).join('')}</div>
-  </div>
-  ${attn.length ? `<section class="block"><span class="label">Needs attention</span><div class="attn">${attn.map((x) => {
-    const cls = x.days < 0 ? 'late' : x.days <= 7 ? 'soon' : '';
-    const txt = x.days < 0 ? `${-x.days}d` : x.days === 0 ? 'Today' : `${x.days}d`;
-    return `<a href="#/r/${x.r.id}"><span class="cd-badge ${cls}">${txt}</span><span class="t"><span>${esc(titleOf(x.r))}</span><span>${esc(x.label)} · ${x.days < 0 ? 'overdue' : rel(x.days)}</span></span></a>`;
-  }).join('')}</div></section>` : ''}
+  if (!room) return emptyState('Unknown room.', '#/now', 'Back home');
+  const main = room.modules.find((m) => m !== 'journal' && m !== 'links') || room.modules[0];
+  // health and me also draw from mood/habit logs, which live outside their own lists
+  const total = room.modules.reduce((n, m) => n + db.list(m).length, 0)
+    + (id === 'health' ? db.list('days').filter((d) => d.data.mood).length + db.list('habits').length : 0);
+  return `<div class="dash" style="--c:${room.color}"><div class="dash-body">
+  ${header(room.name, { back: { name: 'Home', href: '#/now' }, kicker: `<span class="tile-ico sm" style="--c:${room.color}">${icon(room.icon || 'life', 13)}</span>`, actions: `<button type="button" class="icon-btn" data-action="room-add" data-m="${main}" aria-label="Add to ${esc(room.name)}">${icon('plus', 18)}</button>` })}
+  ${total ? roomDashboard(room) : `<section class="vcard start"><p class="start-text">${esc(HINTS[main] || `Nothing in ${room.name} yet.`)}</p><button type="button" class="btn primary" data-action="room-add" data-m="${main}">Add your first</button></section>`}
   ${room.modules.filter((m) => db.list(m).length).map((m) => {
-    const list = sortRecords(MODULE[m], db.list(m)).slice(0, 3);
+    const list = sortRecords(MODULE[m], db.list(m)).slice(0, 4);
     const n = db.list(m).length;
-    return `<section class="block coll"><div class="coll-head"><a href="${collectionHref(m)}" class="coll-name">${esc(MODULE[m].name)} <span>${n}</span></a><span class="coll-actions"><a class="icon-btn sm" href="#/new/${m}" aria-label="Add to ${esc(MODULE[m].name)}">${icon('plus', 16)}</a></span></div>
-      <div class="list">${list.map((r) => row(r)).join('')}</div>
-      ${m === 'journal' || m === 'links' ? '' : inlineAdd(MODULE[m])}
-      ${n > 3 ? `<a class="see-all" href="${collectionHref(m)}">See all ${n} ›</a>` : ''}</section>`;
+    return `<section class="block coll"><div class="coll-head"><span class="coll-name">${esc(MODULE[m].name)} <span>${n}</span></span><a class="link" href="${collectionHref(m)}">${n > 4 ? `All ${n}` : 'Manage'} ›</a></div>
+      <div class="list">${list.map((r) => row(r)).join('')}</div></section>`;
   }).join('')}
-  ${room.modules.some((m) => !db.list(m).length) || (room.extra || []).length ? `<section class="block"><span class="label">Add to ${esc(room.name)}</span><div class="chips">
-    ${room.modules.filter((m) => !db.list(m).length).map((m) => `<a class="chip" href="${collectionHref(m)}">+ ${esc(MODULE[m].name)}</a>`).join('')}
-    ${(room.extra || []).map((e) => `<a class="chip" href="${esc(e.href)}">${esc(e.name)}</a>`).join('')}
-  </div></section>` : ''}`;
+  </div>
+  ${(room.extra || []).length ? `<div class="home-links">${room.extra.map((e) => `<a href="${esc(e.href)}">${esc(e.name)}</a>`).join('')}</div>` : ''}
+  </div>`;
 }
 
 function renderSide() { /* no sidebar: one layout everywhere */ }
@@ -1318,11 +1421,7 @@ async function viewRecord(id, tab = 'view') {
   const deleted = !!r.deletedAt;
   const isJournal = r.module === 'journal';
   const title = isJournal ? `${fmtDay(r.data.at)} · ${fmtTime(r.data.at)}` : titleOf(r);
-  const tabs = `<nav class="tabs" aria-label="View">
-    <a href="#/r/${id}" class="${tab === 'view' ? 'on' : ''}">Overview</a>
-    <a href="#/r/${id}/edit" class="${tab === 'edit' ? 'on' : ''}">Edit</a>
-    <a href="#/r/${id}/history" class="${tab === 'history' ? 'on' : ''}">History</a>
-  </nav>`;
+  const tabs = '';
   const trashNote = deleted ? `<div class="notice">In Trash. <button type="button" class="link" data-action="restore-trash" data-id="${id}">Restore</button></div>` : '';
 
   if (tab === 'history') {
@@ -1375,6 +1474,7 @@ async function viewRecord(id, tab = 'view') {
   <div class="record-foot">
     ${r.module === 'jobs' && !deleted ? `<button class="btn small" type="button" data-action="merge-open" data-id="${id}">Merge into…</button>` : ''}
     ${deleted ? '' : `<button class="btn danger small" type="button" data-action="delete" data-id="${id}">Delete</button>`}
+    <a class="link" href="#/r/${id}/history">History</a>
     <span class="mono">Updated ${fmtDay(r.updatedAt.slice(0, 10))}</span>
   </div>
   ${deleted ? '' : `<div class="action-bar">
@@ -1978,6 +2078,13 @@ document.addEventListener('click', async (e) => {
     case 'copy-redirect':
       try { await navigator.clipboard.writeText(google.redirectUri()); toast('Copied'); } catch { toast(google.redirectUri()); }
       break;
+    case 'room-add': {
+      const m = el.dataset.m;
+      if (m === 'journal') { openRecorder(); break; }
+      openQuickAdd(QUICK.includes(m) ? m : 'tasks');
+      if (!QUICK.includes(m)) { const sheet = document.querySelector('#sheet form'); if (sheet) sheet.dataset.forceModule = m; const lab = document.querySelector('#sheet .label'); if (lab) lab.textContent = `Add to ${MODULE[m].name}`; document.querySelector('#sheet .chips')?.remove(); }
+      break;
+    }
     case 'gmail-ignore': await gmail.ignore(el.dataset.msg); render(); break;
     case 'gmail-reset': await gmail.resetScan(); toast('Next scan starts from scratch.'); break;
     case 'starter-links': {
@@ -2128,7 +2235,7 @@ document.addEventListener('submit', async (e) => {
       toast(`${MODULE[r.module].fields.find((x) => x.k === form.dataset.k).label}: ${fmtDay(v)}`, { undo: true });
     } else if (kind === 'quick') {
       const text = form.elements.text.value.trim();
-      const id = form.elements.module.value;
+      const id = form.dataset.forceModule || form.elements.module?.value || 'tasks';
       if (!text) return;
       const m = MODULE[id];
       const data = { ...defaults(id) };
