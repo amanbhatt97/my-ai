@@ -21,24 +21,25 @@
   <span id="sync-dot" class="sync-dot" data-state="off" role="status" aria-label="Sync status"></span>
   <main id="main" tabindex="-1"><p class="boot">Loading…</p></main>
 
+  <aside id="side" class="side" aria-label="Life tree"></aside>
   <nav class="nav" aria-label="Main">
-    <a href="#/now" data-nav="now">
+    <a href="#/now" data-nav="today">
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/><circle cx="12" cy="12" r="4"/></svg>
-      <span>Now</span>
+      <span>Today</span>
     </a>
-    <a href="#/plan" data-nav="plan">
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4"/></svg>
-      <span>Plan</span>
+    <a href="#/t/track" data-nav="track">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M8.5 12l2.5 2.5 4.5-5"/></svg>
+      <span>Track</span>
     </a>
     <button type="button" class="nav-add" data-action="quick-add" aria-label="Quick add">
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
     </button>
-    <a href="#/journal" data-nav="journal">
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
-      <span>Journal</span>
+    <a href="#/plan" data-nav="plan">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4"/></svg>
+      <span>Plan</span>
     </a>
     <a href="#/life" data-nav="life">
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></svg>
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M12 4v5M12 9H6v4M12 9h6v4M6 13v3M18 13v3M12 9v7"/><circle cx="12" cy="4" r="1.6"/><circle cx="6" cy="18" r="1.8"/><circle cx="12" cy="18" r="1.8"/><circle cx="18" cy="18" r="1.8"/></svg>
       <span>Life</span>
     </a>
   </nav>

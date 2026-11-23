@@ -4,6 +4,7 @@ import { Recorder, saveRecording, transcribe, retryPending, localStamp } from '.
 import * as gmail from './gmail.js';
 import * as gcal from './gcal.js';
 import * as google from './google.js';
+import { TREE, nodeById, pathTo, nodeForRoute, hrefOf, childrenOf, modulesUnder } from './tree.js';
 import { MODULES, MODULE, GROUPS, LINK_CATEGORIES, titleOf, defaults, isDone } from './schemas.js';
 
 // ── tiny helpers ────────────────────────────────────────────────────────
@@ -35,6 +36,7 @@ function weekNo(d = new Date()) {
   const y0 = new Date(Date.UTC(t.getUTCFullYear(), 0, 1));
   return Math.ceil(((t - y0) / 864e5 + 1) / 7);
 }
+const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 'S'}`;
 const titleKey = (m) => (typeof m.title === 'string' ? m.title : m.fields.find((x) => x.req).k);
 
 // ── icons (inline stroke SVG) ───────────────────────────────────────────
@@ -50,6 +52,20 @@ const I = {
   back: '<path d="M15 5l-7 7 7 7"/>',
   check: '<path d="M5 12l5 5 9-10"/>',
   chart: '<path d="M5 20V10M12 20V4M19 20v-7"/>',
+  track: '<circle cx="12" cy="12" r="8"/><path d="M8.5 12l2.5 2.5 4.5-5"/>',
+  career: '<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2M3 13h18"/>',
+  learning: '<path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5z"/><path d="M4 20.5A2.5 2.5 0 0 1 6.5 18H20v3H6.5"/>',
+  health: '<path d="M20.8 6.6a5 5 0 0 0-8.8-2.4 5 5 0 0 0-8.8 2.4c-.6 4.8 8.8 11.4 8.8 11.4s9.4-6.6 8.8-11.4z"/><path d="M3.5 11h4l2-3 3 6 2-3h6"/>',
+  money: '<rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18M16 15h2"/>',
+  assets: '<circle cx="8" cy="15" r="4"/><path d="M11 12l8-8M16 7l2 2M14 9l2 2"/>',
+  people: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M18 14a6 6 0 0 1 3.5 6"/>',
+  travel: '<path d="M10.5 13.5L3 11l1.5-1.5 8 1 4-4.5a2.1 2.1 0 0 1 3 3l-4.5 4 1 8L14.5 22 12 14.5"/>',
+  home: '<path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>',
+  globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
+  star: '<path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/>',
+  shield: '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M12 8v5M12 16h.01"/>',
+  chev: '<path d="M9 6l6 6-6 6"/>',
+  dot: '<circle cx="12" cy="12" r="2.5"/>',
   out: '<path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>',
   edit: '<path d="M4 20h4L19 9l-4-4L4 16z"/>',
   link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
@@ -162,20 +178,23 @@ const go = (hash) => { location.hash = hash; };
 const VIEWS = {
   now: viewNow, plan: viewPlan, journal: viewJournal, life: viewLife,
   m: viewModule, new: viewNew, r: viewRecord, search: viewSearch, settings: viewSettings, trash: viewTrash,
-  links: viewLinks, setup: viewSetup, progress: viewProgress, inbox: viewInbox,
+  links: viewLinks, setup: viewSetup, progress: viewProgress, inbox: viewInbox, t: viewNode,
 };
 
 async function render() {
   currentRoute = parseRoute();
   formDirty = false;
+  currentCrumbs = crumbsFor(currentRoute);
   const view = VIEWS[currentRoute.name] || viewNow;
   const main = $('#main');
   main.innerHTML = await view(...currentRoute.parts);
   main.focus({ preventScroll: true });
   window.scrollTo(0, 0);
+  const top = currentRoute.name === 'now' ? 'today' : currentRoute.name === 't' ? (pathTo(currentRoute.parts[0])[1]?.id || 'life') : (currentCrumbs[1]?.id || (currentRoute.name === 'plan' ? 'plan' : 'life'));
   for (const a of document.querySelectorAll('.nav a')) {
-    a.classList.toggle('on', a.dataset.nav === currentRoute.name || (a.dataset.nav === 'life' && ['m', 'r', 'new', 'trash', 'links', 'setup'].includes(currentRoute.name)));
+    a.classList.toggle('on', a.dataset.nav === (['today', 'track', 'plan'].includes(top) ? top : 'life'));
   }
+  renderSide();
   hydrate();
 }
 
@@ -191,10 +210,40 @@ async function hydrate() {
 }
 
 // ── shared pieces ───────────────────────────────────────────────────────
+let currentCrumbs = [];
+function crumbsFor(route) {
+  const { name, parts } = route;
+  let path = [];
+  if (name === 't') path = pathTo(parts[0]).slice(0, -1);
+  else if (name === 'm' || name === 'new') {
+    const mid = (parts[0] || '').split('?')[0];
+    path = pathTo(`m-${mid}`);
+    if (name === 'm' && !parts[1]) path = path.slice(0, -1);
+  } else if (name === 'r') {
+    const rec = db.get(parts[0]);
+    if (rec) {
+      path = pathTo(`m-${rec.module}`);
+      if (parts[1]) path.push({ id: 'rec', name: titleOf(rec).slice(0, 28), route: `#/r/${rec.id}` });
+    }
+  } else if (name !== 'now') {
+    const n = nodeForRoute(`#/${name}`);
+    if (n) path = pathTo(n.id).slice(0, -1);
+  }
+  return path;
+}
+function crumbsHtml(path) {
+  if (!path.length) return '';
+  return `<nav class="crumbs" aria-label="Breadcrumb">${path.map((n, i) => `${i ? '<span class="sep" aria-hidden="true">/</span>' : ''}<a href="${esc(n.href || hrefOf(n))}">${esc(n.name)}</a>`).join('')}</nav>`;
+}
+
 function header(title, { kicker = '', back = '', actions = '' } = {}) {
+  const crumbs = crumbsHtml(currentCrumbs);
+  const parent = currentCrumbs[currentCrumbs.length - 1];
+  const backHref = back || (parent ? (parent.href || hrefOf(parent)) : '');
   return `<header class="top">
+    ${crumbs}
     <div class="top-row">
-      ${back ? `<a class="icon-btn" href="${back}" aria-label="Back">${icon('back')}</a>` : ''}
+      ${backHref ? `<a class="icon-btn" href="${backHref}" aria-label="Back">${icon('back')}</a>` : ''}
       <div class="top-title">${kicker ? `<span class="kicker">${esc(kicker)}</span>` : ''}<h1>${esc(title)}</h1></div>
       <div class="top-actions">${actions}</div>
     </div>
@@ -434,7 +483,7 @@ function pinnedLinks() {
 async function viewLinks() {
   const all = db.list('links');
   const groups = LINK_CATEGORIES.map((c) => [c, all.filter((r) => (r.data.category || 'other') === c).sort((a, b) => titleOf(a).localeCompare(titleOf(b)))]).filter(([, l]) => l.length);
-  return `${header('Links', { kicker: `${all.length} SAVED`, back: '#/life', actions: `<a class="btn primary small" href="#/new/links">+ Link</a>` })}
+  return `${header('Links', { kicker: `${all.length} SAVED`, actions: `<a class="btn primary small" href="#/new/links">+ Link</a>` })}
   ${all.length ? '' : `<div class="empty"><p>Profiles, finance logins, government portals: everything you open often.</p><button type="button" class="btn primary" data-action="starter-links">Add starter links</button></div>`}
   ${groups.map(([c, list]) => `<section class="block">
     <span class="label">${esc(c === 'profile' ? 'Profiles' : c[0].toUpperCase() + c.slice(1))}</span>
@@ -503,7 +552,7 @@ async function viewProgress() {
   const goals = db.list('goals').filter((g) => g.data.status === 'active' || !g.data.status);
 
   const tile = (v, k, cls = '') => `<div class="stat"><span class="stat-v ${cls}">${v}</span><span class="mono small muted">${esc(k)}</span></div>`;
-  return `${header('Progress', { kicker: 'TRACKING', back: '#/now' })}
+  return `${header('Progress', { kicker: 'TRACKING' })}
   <div class="stats">
     ${tile(doneThisWeek, 'TASKS DONE THIS WEEK')}
     ${tile(open.length, 'OPEN TASKS')}
@@ -563,7 +612,7 @@ async function viewInbox() {
   const gm = (await db.kvGet('gmail')) || {};
   const last = await db.kvGet('gmailLastScan');
   const statuses = MODULE.jobs.fields.find((x) => x.k === 'status').options;
-  return `${header('From Gmail', { kicker: 'JOB APPLICATIONS', back: '#/m/jobs' })}
+  return `${header('From Gmail', { kicker: 'JOB APPLICATIONS' })}
   <section class="block">
     <button type="button" class="btn primary wide" data-action="gmail-scan">Scan Gmail</button>
     <p class="small muted" id="scan-status">${gm.clientId ? (last ? `Last scan ${new Date(last).toLocaleString('en-IN')}` : 'Never scanned. The first scan looks back ' + (gm.firstDays || 90) + ' days.') : 'Set up Gmail in Settings first.'}</p>
@@ -584,7 +633,7 @@ async function viewInbox() {
 // ── SETUP GUIDE ─────────────────────────────────────────────────────────
 async function viewSetup() {
   const done = SETUP.filter(setupDone).length;
-  return `${header('Set up', { kicker: `${done} OF ${SETUP.length} DONE`, back: '#/now' })}
+  return `${header('Set up', { kicker: `${done} OF ${SETUP.length} DONE` })}
   <p class="muted lead">Enter these once. After that the app reminds you before anything expires or is due. Each step takes 2–10 minutes; do them in any order.</p>
   <ol class="steps">${SETUP.map((s, i) => {
     const ok = setupDone(s);
@@ -679,22 +728,85 @@ async function viewJournal() {
 }
 
 // ── LIFE (all modules) ─────────────────────────────────────────────────
+function nodeCount(node) {
+  if (node.status) return db.list(node.module).filter((r) => r.data[MODULE[node.module].status] === node.status).length;
+  if (node.module) return db.list(node.module).length;
+  if (node.id === 'links') return db.list('links').length;
+  if (node.id === 'journal') return db.list('journal').length;
+  const mods = modulesUnder(node);
+  return mods.length ? mods.reduce((n, m) => n + db.list(m).length, 0) : null;
+}
+let dueCache = null;
+function dueUnder(node) {
+  if (!dueCache) {
+    dueCache = new Map();
+    for (const x of reminders()) if (x.days <= 14) dueCache.set(x.r.module, (dueCache.get(x.r.module) || 0) + 1);
+  }
+  if (node.status) return 0;
+  return modulesUnder(node).reduce((n, m) => n + (dueCache.get(m) || 0), 0);
+}
+
+function treeOpen() { try { return new Set(JSON.parse(localStorage.getItem('treeOpen') || '["areas"]')); } catch { return new Set(['areas']); } }
+function setTreeOpen(id, open) {
+  const s = treeOpen();
+  if (open) s.add(id); else s.delete(id);
+  try { localStorage.setItem('treeOpen', JSON.stringify([...s])); } catch { /* ignore */ }
+}
+
+function treeHtml(node, { depth = 0, open = treeOpen(), active = new Set(), compact = false } = {}) {
+  const kids = childrenOf(node);
+  return `<ul class="tree ${depth ? '' : 'tree-root'}">${kids.map((c) => {
+    const sub = childrenOf(c);
+    const n = nodeCount(c);
+    const due = dueUnder(c);
+    const href = c.href || hrefOf(c);
+    const isActive = active.has(c.id);
+    const label = `<a class="tn-link ${isActive ? 'on' : ''}" href="${esc(href)}">${c.icon ? `<span class="tn-ico">${icon(c.icon, 16)}</span>` : ''}<span class="tn-name">${esc(c.name)}</span>${due ? `<span class="tn-due" title="${due} due soon">${due}</span>` : ''}${n !== null ? `<span class="tn-n mono">${n}</span>` : ''}</a>`;
+    if (!sub.length || (compact && depth >= 3)) return `<li class="tn leaf">${label}</li>`;
+    const isOpen = open.has(c.id) || isActive;
+    return `<li class="tn"><details data-node="${esc(c.id)}" ${isOpen ? 'open' : ''}><summary><span class="tn-chev" aria-hidden="true">${icon('chev', 14)}</span>${label}</summary>${treeHtml(c, { depth: depth + 1, open, active, compact })}</details></li>`;
+  }).join('')}</ul>`;
+}
+
 async function viewLife() {
-  const setupLeft = SETUP.length - SETUP.filter(setupDone).length;
-  return `${header('Life', { kicker: `${MODULES.length} SECTIONS`, actions: `<a class="icon-btn" href="#/search" aria-label="Search">${icon('search')}</a>` })}
-  <div class="quick3">
-    <a href="#/links">${icon('link', 18)}<span>Links</span><span class="mono small muted">${db.list('links').length}</span></a>
-    <a href="#/progress">${icon('chart', 18)}<span>Progress</span><span class="mono small muted">stats</span></a>
-    <a href="#/setup">${icon('check', 18)}<span>Set up</span><span class="mono small muted">${setupLeft ? `${setupLeft} left` : 'done'}</span></a>
-  </div>
-  ${GROUPS.filter((g) => g !== 'Links').map((g) => `<section class="block">
-    <span class="label">${esc(g)}</span>
-    <div class="index">${MODULES.filter((m) => m.group === g).map((m) => {
-      const n = db.list(m.id).length;
-      return `<a href="#/m/${m.id}"><span>${esc(m.name)}</span><span class="mono small ${n ? '' : 'muted'}">${String(n).padStart(2, '0')}</span></a>`;
-    }).join('')}</div>
-  </section>`).join('')}
-  <section class="block"><div class="links"><a href="#/trash">Trash</a><a href="#/settings">Settings</a></div></section>`;
+  dueCache = null;
+  const total = db.all().length;
+  return `${header('Life', { kicker: `${plural(total, 'ITEM')} · TREE`, actions: `<a class="icon-btn" href="#/search" aria-label="Search">${icon('search')}</a>` })}
+  <div class="mode-legend mono"><span><i class="m-do"></i>DO · daily</span><span><i class="m-manage"></i>MANAGE · set up & edit</span></div>
+  <section class="block tree-block">${treeHtml(TREE)}</section>`;
+}
+
+async function viewNode(id) {
+  const node = nodeById(id);
+  if (!node) return emptyState('Unknown section.', '#/life', 'Back to Life');
+  dueCache = null;
+  const kids = childrenOf(node);
+  const n = nodeCount(node);
+  return `${header(node.name, { kicker: n !== null ? plural(n, 'ITEM') : '' })}
+  <div class="node-grid">${kids.map((c) => {
+    const sub = childrenOf(c);
+    const cn = nodeCount(c);
+    const due = dueUnder(c);
+    return `<a class="node-card" href="${esc(c.href || hrefOf(c))}">
+      <span class="nc-top">${c.icon ? `<span class="nc-ico">${icon(c.icon, 20)}</span>` : `<span class="nc-ico ghost">${icon('dot', 20)}</span>`}${cn !== null ? `<span class="nc-n">${cn}</span>` : ''}</span>
+      <span class="nc-name">${esc(c.name)}</span>
+      ${sub.length ? `<span class="nc-sub mono">${sub.slice(0, 4).map((x) => esc(x.name)).join(' · ')}${sub.length > 4 ? ' …' : ''}</span>` : ''}
+      ${due ? `<span class="nc-due mono">${due} due soon</span>` : ''}
+    </a>`;
+  }).join('')}</div>`;
+}
+
+function renderSide() {
+  const side = $('#side');
+  if (!side) return;
+  dueCache = null;
+  const active = new Set(currentCrumbs.map((n) => n.id));
+  if (currentRoute.name === 'm') active.add(`m-${currentRoute.parts[0]}`);
+  if (currentRoute.name === 't') active.add(currentRoute.parts[0]);
+  const rn = nodeForRoute(`#/${currentRoute.name}`);
+  if (rn) active.add(rn.id);
+  if (currentRoute.name === 'now') active.add('today');
+  side.innerHTML = `<a class="side-brand" href="#/now"><span class="side-logo">${icon('now', 18)}</span><span>Life</span></a>${treeHtml(TREE, { active, compact: true })}`;
 }
 
 // ── MODULE LIST ─────────────────────────────────────────────────────────
@@ -717,7 +829,7 @@ async function viewModule(id, filter = '') {
   const statusField = m.status && m.fields.find((x) => x.k === m.status);
   const counts = {};
   if (statusField) for (const r of db.list(id)) counts[r.data[m.status]] = (counts[r.data[m.status]] || 0) + 1;
-  return `${header(m.name, { kicker: m.group.toUpperCase(), back: '#/life', actions: `${id === 'jobs' ? '<a class="btn ghost small" href="#/inbox">Gmail</a>' : ''}<a class="btn primary small" href="#/new/${id}">+ New</a>` })}
+  return `${header(m.name, { kicker: plural(db.list(id).length, 'ITEM'), actions: `${id === 'jobs' ? '<a class="btn ghost small" href="#/inbox">Gmail</a>' : ''}<a class="btn primary small" href="#/new/${id}">+ New</a>` })}
   <div class="toolbar">
     <label class="search-box">${icon('search', 16)}<input type="search" data-filter="${id}" data-status="${esc(filter)}" placeholder="Filter ${esc(m.name.toLowerCase())}" aria-label="Filter"></label>
   </div>
@@ -801,7 +913,7 @@ async function viewNew(idWithQuery) {
   if (id === 'journal') { data.at = localStamp(); data.status = 'typed'; }
   if (id === 'days') data.date = todayStr();
   if (id === 'reviews' || id === 'decisions' || id === 'wins' || id === 'lessons') data.date = todayStr();
-  return `${header(`New · ${m.name}`, { back: `#/m/${id}` })}
+  return `${header(`New · ${m.name}`)}
   <form class="form" data-form="new" data-module="${id}">
     ${formFields(m, data)}
     ${Object.entries(data).filter(([k]) => m.fields.find((x) => x.k === k)?.hidden).map(([k, v]) => `<input type="hidden" data-hidden="${esc(k)}" value="${esc(JSON.stringify(v))}">`).join('')}
@@ -817,7 +929,7 @@ async function viewRecord(id, tab = 'details') {
   const deleted = !!r.deletedAt;
   const isJournal = r.module === 'journal';
   const title = isJournal ? `${fmtDay(r.data.at)} · ${fmtTime(r.data.at)}` : titleOf(r);
-  return `${header(title, { kicker: m.name.toUpperCase(), back: `#/m/${r.module}` })}
+  return `${header(title, { kicker: m.name.toUpperCase() })}
   ${deleted ? `<div class="notice">In Trash. <button type="button" class="link" data-action="restore-trash" data-id="${id}">Restore</button></div>` : ''}
   <nav class="tabs" aria-label="View">
     <a href="#/r/${id}" class="${tab === 'details' ? 'on' : ''}">Details</a>
@@ -878,7 +990,7 @@ async function historyHtml(id) {
 
 // ── SEARCH ──────────────────────────────────────────────────────────────
 async function viewSearch() {
-  return `${header('Search', { back: '#/now' })}
+  return `${header('Search')}
   <div class="toolbar"><label class="search-box">${icon('search', 16)}<input type="search" id="global-q" placeholder="Search everything" aria-label="Search everything" autofocus></label></div>
   <div class="list" id="search-results"><p class="muted pad">People, companies, trips, documents, journal… anything.</p></div>`;
 }
@@ -893,7 +1005,7 @@ function searchHtml(q) {
 // ── TRASH ───────────────────────────────────────────────────────────────
 async function viewTrash() {
   const items = db.trash().sort((a, b) => b.deletedAt.localeCompare(a.deletedAt));
-  return `${header('Trash', { kicker: 'KEPT 30 DAYS', back: '#/life' })}
+  return `${header('Trash', { kicker: 'KEPT 30 DAYS' })}
   <div class="list">${items.length ? items.map((r) => `<div class="row">
     <span class="row-title">${esc(titleOf(r))} <span class="muted small">· ${esc(MODULE[r.module]?.name || r.module)}</span></span>
     <button type="button" class="btn ghost small" data-action="restore-trash" data-id="${r.id}">Restore</button>
@@ -909,7 +1021,7 @@ async function viewSettings() {
   const theme = getTheme();
   const gm = (await db.kvGet('gmail')) || {};
   const gc = await gcal.settings();
-  return `${header('Settings', { back: '#/now' })}
+  return `${header('Settings')}
   <section class="block">
     <span class="label">Appearance</span>
     <div class="chips" role="radiogroup" aria-label="Theme">
@@ -1280,6 +1392,10 @@ document.addEventListener('submit', async (e) => {
     toast(err.message || 'Something went wrong');
   }
 });
+
+document.addEventListener('toggle', (e) => {
+  if (e.target.matches && e.target.matches('details[data-node]')) setTreeOpen(e.target.dataset.node, e.target.open);
+}, true);
 
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && $('#sheet').classList.contains('open') && !recorder) closeSheet();
