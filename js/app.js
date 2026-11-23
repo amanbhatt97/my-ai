@@ -922,30 +922,93 @@ async function viewNew(idWithQuery) {
 }
 
 // ── RECORD DETAIL ───────────────────────────────────────────────────────
-async function viewRecord(id, tab = 'details') {
+// Read-only display of one field value.
+function valueHtml(fd, v, r) {
+  switch (fd.type) {
+    case 'date': {
+      const days = diffDays(parseDay(v), startOfToday());
+      return `${esc(fmtDay(v))} <span class="mono small ${days < 0 && fd.remind !== undefined ? 'warn' : 'muted'}">· ${rel(days)}</span>`;
+    }
+    case 'datetime': return `${esc(fmtDay(v))} · ${esc(fmtTime(v))}`;
+    case 'money': return `₹${Number(v).toLocaleString('en-IN')}`;
+    case 'number': return esc(Number(v).toLocaleString('en-IN'));
+    case 'url': return `<a class="ext" href="${esc(v)}" target="_blank" rel="noopener">${esc(v.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '').slice(0, 48))} ${icon('out', 14)}</a>`;
+    case 'links': return v.map((u) => `<a class="ext" href="${esc(u)}" target="_blank" rel="noopener">${esc(u.replace(/^https?:\/\/(www\.)?/, '').slice(0, 40))} ${icon('out', 14)}</a>`).join('<br>');
+    case 'tags': return `<span class="tagrow">${v.map((t) => `<span class="tag">${esc(t)}</span>`).join('')}</span>`;
+    case 'check': return v ? 'Yes' : 'No';
+    case 'rating': return `<span class="dots" aria-label="${v} of 5">${[1, 2, 3, 4, 5].map((n) => `<i class="${n <= v ? 'on' : ''}"></i>`).join('')}</span>`;
+    case 'ref': { const t = db.get(v); return t ? `<a href="#/r/${t.id}">${esc(titleOf(t))}</a>` : '—'; }
+    case 'secret4': return `<span class="mono">•••• ${esc(v)}</span>`;
+    case 'long': return `<span class="prose">${esc(v)}</span>`;
+    default: return esc(v);
+  }
+}
+const isEmpty = (v) => v === undefined || v === null || v === '' || (Array.isArray(v) && !v.length);
+
+async function viewRecord(id, tab = 'view') {
   const r = db.get(id);
   if (!r) return emptyState('This item no longer exists.', '#/life', 'Back to Life');
   const m = MODULE[r.module];
   const deleted = !!r.deletedAt;
   const isJournal = r.module === 'journal';
   const title = isJournal ? `${fmtDay(r.data.at)} · ${fmtTime(r.data.at)}` : titleOf(r);
-  return `${header(title, { kicker: m.name.toUpperCase() })}
-  ${deleted ? `<div class="notice">In Trash. <button type="button" class="link" data-action="restore-trash" data-id="${id}">Restore</button></div>` : ''}
-  <nav class="tabs" aria-label="View">
-    <a href="#/r/${id}" class="${tab === 'details' ? 'on' : ''}">Details</a>
+  const tabs = `<nav class="tabs" aria-label="View">
+    <a href="#/r/${id}" class="${tab === 'view' ? 'on' : ''}">Overview</a>
+    <a href="#/r/${id}/edit" class="${tab === 'edit' ? 'on' : ''}">Edit</a>
     <a href="#/r/${id}/history" class="${tab === 'history' ? 'on' : ''}">History</a>
-  </nav>
-  ${tab === 'history' ? `<section class="block" id="history" data-id="${id}"><p class="muted">Loading…</p></section>` : `
-  ${isJournal ? journalExtras(r) : ''}
-  ${r.module === 'jobs' && (r.data.emails || []).length ? `<section class="block"><span class="label">Emails</span><ul class="heads">${r.data.emails.slice().sort((a, b) => b.date.localeCompare(a.date)).map((m) => `<li><a href="${esc(gmail.mailLink(m.threadId))}" target="_blank" rel="noopener"><span>${esc(m.subject)}</span><span class="mono small muted">${fmtDay(m.date)}</span></a></li>`).join('')}</ul></section>` : ''}
-  <form class="form" data-form="edit" data-id="${id}" data-module="${r.module}">
-    ${formFields(m, r.data)}
-    <div class="form-actions">
-      <button class="btn primary" type="submit">Save</button>
-      ${deleted ? '' : `<button class="btn danger" type="button" data-action="delete" data-id="${id}">Delete</button>`}
-    </div>
-    <p class="small muted">Created ${fmtDay(r.createdAt.slice(0, 10))} · updated ${fmtDay(r.updatedAt.slice(0, 10))} ${r.updatedAt.slice(11, 16)} UTC</p>
-  </form>`}`;
+  </nav>`;
+  const trashNote = deleted ? `<div class="notice">In Trash. <button type="button" class="link" data-action="restore-trash" data-id="${id}">Restore</button></div>` : '';
+
+  if (tab === 'history') {
+    return `${header(title, { kicker: 'HISTORY' })}${trashNote}${tabs}<section class="block" id="history" data-id="${id}"><p class="muted">Loading…</p></section>`;
+  }
+  if (tab === 'edit') {
+    return `${header(title, { kicker: 'EDITING' })}${trashNote}${tabs}
+    <form class="form" data-form="edit" data-id="${id}" data-module="${r.module}">
+      ${formFields(m, r.data)}
+      <div class="form-actions">
+        <button class="btn primary" type="submit">Save changes</button>
+        <a class="btn ghost" href="#/r/${id}">Cancel</a>
+      </div>
+    </form>`;
+  }
+
+  // ── overview (read-only, with quick actions) ──
+  const tk = typeof m.title === 'string' ? m.title : null;
+  const statusField = m.status && m.fields.find((x) => x.k === m.status);
+  const visible = m.fields.filter((fd) => !fd.hidden && fd.k !== tk && fd.k !== m.status && !(isJournal && ['text', 'at'].includes(fd.k)));
+  const filled = visible.filter((fd) => !isEmpty(r.data[fd.k]) && fd.type !== 'long');
+  const longs = visible.filter((fd) => !isEmpty(r.data[fd.k]) && fd.type === 'long');
+  const empty = visible.filter((fd) => isEmpty(r.data[fd.k]));
+  const t0 = startOfToday();
+  const countdowns = m.fields.filter((fd) => fd.remind !== undefined && r.data[fd.k] && !isDone(r)).map((fd) => {
+    let d = parseDay(r.data[fd.k]);
+    if (fd.yearly) { d = new Date(t0.getFullYear(), d.getMonth(), d.getDate()); if (d < t0) d.setFullYear(d.getFullYear() + 1); }
+    return { fd, days: diffDays(d, t0) };
+  }).sort((a, b) => a.days - b.days);
+  const done = isDone(r);
+  const doneToggle = m.fields.find((x) => x.type === 'check' && ['done', 'settled'].includes(x.k));
+
+  return `${header(title, { actions: deleted ? '' : `<a class="icon-btn" href="#/r/${id}/edit" aria-label="Edit">${icon('edit')}</a>` })}
+  ${trashNote}${tabs}
+  ${statusField ? `<section class="block">
+    <span class="label">${esc(statusField.label)}</span>
+    <div class="chips status-chips" role="group" aria-label="${esc(statusField.label)}">${statusField.options.map((o) => `<button type="button" class="chip ${r.data[m.status] === o ? 'on' : ''}" data-action="set-status" data-id="${id}" data-v="${esc(o)}" aria-pressed="${r.data[m.status] === o}">${esc(o)}</button>`).join('')}</div>
+  </section>` : ''}
+  ${countdowns.length ? `<div class="countdowns">${countdowns.map(({ fd, days }) => `<div class="cd ${days < 0 ? 'late' : days <= (fd.remind || 0) ? 'soon' : ''}">
+      <span class="cd-v">${days < 0 ? -days : days}<small>${Math.abs(days) === 1 ? 'day' : 'days'}</small></span>
+      <span class="mono cd-k">${esc(fd.label)} · ${days < 0 ? 'overdue' : days === 0 ? 'today' : 'left'}</span>
+    </div>`).join('')}</div>` : ''}
+  ${isJournal ? `<section class="block"><span class="label">Entry</span><p class="prose big">${esc(r.data.text || statusText(r.data.status) || 'Empty entry')}</p></section>${journalExtras(r)}` : ''}
+  ${filled.length ? `<section class="block"><span class="label">Details</span><dl class="spec">${filled.map((fd) => `<div><dt>${esc(fd.label)}</dt><dd>${valueHtml(fd, r.data[fd.k], r)}</dd></div>`).join('')}</dl></section>` : ''}
+  ${longs.map((fd) => `<section class="block"><span class="label">${esc(fd.label)}</span><p class="prose">${esc(r.data[fd.k])}</p></section>`).join('')}
+  ${r.module === 'jobs' && (r.data.emails || []).length ? `<section class="block"><span class="label">Emails</span><ul class="heads">${r.data.emails.slice().sort((a, b) => b.date.localeCompare(a.date)).map((em) => `<li><a href="${esc(gmail.mailLink(em.threadId))}" target="_blank" rel="noopener"><span>${esc(em.subject)}</span><span class="mono small muted">${fmtDay(em.date)}</span></a></li>`).join('')}</ul></section>` : ''}
+  ${empty.length && !deleted ? `<a class="add-more" href="#/r/${id}/edit"><span class="mono">+ ${empty.length} EMPTY FIELD${empty.length === 1 ? '' : 'S'}</span><span class="small muted">${esc(empty.slice(0, 4).map((x) => x.label).join(', '))}${empty.length > 4 ? '…' : ''}</span></a>` : ''}
+  <div class="record-foot">
+    ${doneToggle && !deleted ? `<button type="button" class="btn ${done ? 'ghost' : 'primary'} small" data-action="toggle-done" data-id="${id}" data-k="${doneToggle.k}">${done ? 'Mark not done' : `Mark ${doneToggle.label.toLowerCase()}`}</button>` : ''}
+    ${deleted ? '' : `<button class="btn danger small" type="button" data-action="delete" data-id="${id}">Delete</button>`}
+    <span class="small muted mono">Updated ${fmtDay(r.updatedAt.slice(0, 10))} ${r.updatedAt.slice(11, 16)} UTC</span>
+  </div>`;
 }
 
 function journalExtras(r) {
@@ -1275,6 +1338,21 @@ document.addEventListener('click', async (e) => {
       render();
       break;
     }
+    case 'set-status': {
+      const r = db.get(id);
+      const m = MODULE[r.module];
+      const patch = { [m.status]: el.dataset.v };
+      if (r.module === 'tasks' && el.dataset.v === 'done' && !r.data.completedOn) patch.completedOn = todayStr();
+      await db.update(id, patch);
+      toast(`${m.fields.find((x) => x.k === m.status).label}: ${el.dataset.v}`, { undo: true });
+      break;
+    }
+    case 'toggle-done': {
+      const r = db.get(id);
+      await db.update(id, { [el.dataset.k]: !r.data[el.dataset.k] });
+      toast('Updated', { undo: true });
+      break;
+    }
     case 'gmail-ignore': await gmail.ignore(el.dataset.msg); render(); break;
     case 'gmail-reset': await gmail.resetScan(); toast('Next scan starts from scratch.'); break;
     case 'starter-links': {
@@ -1346,7 +1424,7 @@ document.addEventListener('submit', async (e) => {
         await db.update(form.dataset.id, data);
         formDirty = false;
         toast('Saved', { undo: true });
-        render();
+        if (location.hash === `#/r/${form.dataset.id}`) render(); else location.hash = `#/r/${form.dataset.id}`;
       }
     } else if (kind === 'quick') {
       const text = form.elements.text.value.trim();
