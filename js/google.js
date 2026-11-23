@@ -76,6 +76,31 @@ export async function signIn(scope) {
   });
 }
 
+// One consent for several features (Gmail, Calendar, Tasks, Drive).
+export async function signInMany(scopes) {
+  if (scopes.every((sc) => hasToken(sc))) return load().token;
+  const id = await clientId();
+  if (!id) throw new Error('Add your Google client ID in Settings first.');
+  await loadGis();
+  const prev = load();
+  const wanted = [...new Set([...(prev?.scopes || []), ...scopes])];
+  return new Promise((resolve, reject) => {
+    const client = window.google.accounts.oauth2.initTokenClient({
+      client_id: id,
+      scope: wanted.join(' '),
+      include_granted_scopes: true,
+      callback: (resp) => {
+        if (resp.error) { reject(new Error(resp.error_description || resp.error)); return; }
+        const granted = (resp.scope || '').split(' ').filter(Boolean);
+        save({ token: resp.access_token, scopes: granted, expiry: Date.now() + Number(resp.expires_in || 3600) * 1000 });
+        resolve(resp.access_token);
+      },
+      error_callback: (err) => reject(new Error(err?.message || 'Google sign-in was closed.')),
+    });
+    client.requestAccessToken({ prompt: '' });
+  });
+}
+
 export function signOut() {
   const t = load();
   if (t && window.google?.accounts?.oauth2) window.google.accounts.oauth2.revoke(t.token, () => {});

@@ -143,7 +143,7 @@ export const MODULES = [
     fields: [
       f('company', 'Company', 'text', { req: true }), f('role', 'Role', 'text'), f('joined', 'Joined', 'date'),
       f('ctc', 'Pay (CTC)', 'text'), f('manager', 'Manager', 'text'), f('notice', 'Notice period', 'text'),
-      f('appraisal', 'Next appraisal', 'date', { remind: 30 }), notes,
+      f('appraisal', 'Next appraisal', 'date', { remind: 30, maxOverdue: 30 }), notes,
     ],
   },
   {
@@ -188,7 +188,7 @@ export const MODULES = [
   },
   {
     id: 'medicines', name: 'Medicines', group: 'Health', title: 'name',
-    fields: [f('name', 'Medicine', 'text', { req: true }), f('dose', 'Dose & timing', 'text'), f('for', 'For', 'text'), f('until', 'Until', 'date', { remind: 3, upcomingOnly: true }), f('refill', 'Refill by', 'date', { remind: 3 })],
+    fields: [f('name', 'Medicine', 'text', { req: true }), f('dose', 'Dose & timing', 'text'), f('for', 'For', 'text'), f('until', 'Until', 'date', { remind: 3, upcomingOnly: true }), f('refill', 'Refill by', 'date', { remind: 3, maxOverdue: 14 })],
   },
   {
     id: 'healthprofile', name: 'Health profile', group: 'Health', title: 'item',
@@ -202,7 +202,7 @@ export const MODULES = [
   },
   {
     id: 'accounts', name: 'Investments & accounts', group: 'Money', title: 'name',
-    fields: [f('name', 'Name', 'text', { req: true }), f('kind', 'Type', 'select', { options: ['bank', 'mutual fund', 'stocks', 'EPF', 'PPF', 'NPS', 'FD', 'gold', 'crypto', 'other'] }), f('where', 'Held with', 'text'), f('last4', 'Account no. (last 4)', 'secret4'), f('value', 'Current value', 'money'), f('nominee', 'Nominee', 'text'), f('maturity', 'Maturity date', 'date', { remind: 30 }), notes],
+    fields: [f('name', 'Name', 'text', { req: true }), f('kind', 'Type', 'select', { options: ['bank', 'mutual fund', 'stocks', 'EPF', 'PPF', 'NPS', 'FD', 'gold', 'crypto', 'other'] }), f('where', 'Held with', 'text'), f('last4', 'Account no. (last 4)', 'secret4'), f('value', 'Current value', 'money'), f('nominee', 'Nominee', 'text'), f('maturity', 'Maturity date', 'date', { remind: 30, maxOverdue: 30 }), notes],
   },
   {
     id: 'loans', name: 'Loans & EMIs', group: 'Money', title: 'name',
@@ -214,7 +214,7 @@ export const MODULES = [
   },
   {
     id: 'subscriptions', name: 'Subscriptions', group: 'Money', title: 'name',
-    fields: [f('name', 'Service', 'text', { req: true }), f('cost', 'Cost', 'money'), f('cycle', 'Billing', 'select', { options: ['monthly', 'quarterly', 'yearly'] }), f('renews', 'Renews on', 'date', { remind: 5 }), f('stillUsing', 'Still using it?', 'check', { def: true }), notes],
+    fields: [f('name', 'Service', 'text', { req: true }), f('cost', 'Cost', 'money'), f('cycle', 'Billing', 'select', { options: ['monthly', 'quarterly', 'yearly'] }), f('renews', 'Renews on', 'date', { remind: 5, rolls: 'cycle' }), f('stillUsing', 'Still using it?', 'check', { def: true }), notes],
   },
   {
     id: 'tax', name: 'Tax', group: 'Money', title: 'title',
@@ -289,7 +289,7 @@ export const MODULES = [
   // ── Home ────────────────────────────────────────────────────────────
   {
     id: 'maintenance', name: 'Maintenance', group: 'Home', title: 'task',
-    fields: [f('task', 'Task', 'text', { req: true, ph: 'AC service / purifier filter' }), f('everyMonths', 'Every (months)', 'number'), f('last', 'Last done', 'date'), f('next', 'Next due', 'date', { remind: 7 }), f('vendor', 'Vendor / contact', 'text'), notes],
+    fields: [f('task', 'Task', 'text', { req: true, ph: 'AC service / purifier filter' }), f('everyMonths', 'Every (months)', 'number'), f('last', 'Last done', 'date'), f('next', 'Next due', 'date', { remind: 7, derive: 'maintenance' }), f('vendor', 'Vendor / contact', 'text'), notes],
   },
   {
     id: 'contacts', name: 'Useful contacts', group: 'Home', title: 'name',
@@ -299,7 +299,7 @@ export const MODULES = [
   // ── Presence ────────────────────────────────────────────────────────
   {
     id: 'profiles', name: 'Portfolio & profiles', group: 'Presence', title: 'name',
-    fields: [f('name', 'Name', 'text', { req: true, ph: 'Portfolio site / GitHub / LinkedIn' }), f('url', 'URL', 'url'), f('lastUpdated', 'Last updated', 'date'), f('nextUpdate', 'Review on', 'date', { remind: 0 }), notes],
+    fields: [f('name', 'Name', 'text', { req: true, ph: 'Portfolio site / GitHub / LinkedIn' }), f('url', 'URL', 'url'), f('lastUpdated', 'Last updated', 'date'), f('nextUpdate', 'Review on', 'date', { remind: 0, maxOverdue: 30 }), notes],
   },
   {
     id: 'projects', name: 'Projects', group: 'Presence', title: 'name', status: 'status',

@@ -543,3 +543,4 @@ body.scrolled .topbar { transform: none; }
 .inline-add:focus-within { border-style: solid; border-color: var(--accent-text); color: var(--accent-text); }
 .inline-add input { flex: 1; min-width: 0; border: 0; background: transparent; color: var(--text); font: inherit; font-size: 16px; outline: none; }
 .coll .inline-add { margin: 6px 0 4px; min-height: 44px; }
+.sync-pill { font-size: 13px; color: var(--muted); }

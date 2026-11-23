@@ -5,6 +5,7 @@ import * as gmail from './gmail.js';
 import * as gcal from './gcal.js';
 import * as drive from './drive.js';
 import * as gtasks from './gtasks.js';
+import * as autosync from './autosync.js';
 import * as google from './google.js';
 import { ROOMS, ROOM, PLAN_MODULES, roomOf, colorOf, homeOf } from './rooms.js';
 import { MODULES, MODULE, GROUPS, LINK_CATEGORIES, titleOf, defaults, isDone } from './schemas.js';
@@ -143,7 +144,7 @@ function reminders() {
     for (const r of db.list(m.id)) {
       if (isDone(r)) continue;
       for (const fd of dateFields) {
-        const v = r.data[fd.k];
+        const v = effectiveDate(r, fd);
         if (!v) continue;
         let d = parseDay(v);
         if (fd.yearly) {
@@ -165,6 +166,21 @@ function reminders() {
     if (days <= 0) out.push({ r, m: MODULE.people, label: 'Reach out', days });
   }
   return out.sort((a, b) => a.days - b.days);
+}
+
+// The date that actually matters for a field: renewals roll forward by
+// their billing cycle, maintenance is worked out from "last done".
+function effectiveDate(r, fd) {
+  const iso = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  let v = r.data[fd.k];
+  if (!v && fd.derive === 'maintenance' && r.data.last && Number(r.data.everyMonths)) {
+    const d = parseDay(r.data.last); d.setMonth(d.getMonth() + Number(r.data.everyMonths)); v = iso(d);
+  }
+  if (v && fd.rolls === 'cycle') {
+    const step = { monthly: 1, quarterly: 3, yearly: 12 }[r.data.cycle];
+    if (step) { const d = parseDay(v); const t0 = startOfToday(); let n = 0; while (d < t0 && n++ < 600) d.setMonth(d.getMonth() + step); v = iso(d); }
+  }
+  return v || '';
 }
 
 // A past date is only "overdue" for things that expire or are due.
@@ -380,14 +396,14 @@ function countdownsOf(r) {
   const m = MODULE[r.module];
   if (!m || isDone(r)) return [];
   const t0 = startOfToday();
-  return m.fields.filter((fd) => fd.remind !== undefined && r.data[fd.k]).map((fd) => {
-    let d = parseDay(r.data[fd.k]);
+  return m.fields.filter((fd) => fd.remind !== undefined && effectiveDate(r, fd)).map((fd) => {
+    let d = parseDay(effectiveDate(r, fd));
     if (fd.yearly) { d = new Date(t0.getFullYear(), d.getMonth(), d.getDate()); if (d < t0) d.setFullYear(d.getFullYear() + 1); }
     return { fd, days: diffDays(d, t0) };
   }).filter(({ fd, days }) => dateStillRelevant(fd, days)).sort((a, b) => a.days - b.days);
 }
 
-const SUB_SKIP = new Set(['long', 'links', 'json', 'url', 'check', 'rating']);
+const SUB_SKIP = new Set(['long', 'links', 'json', 'url', 'check', 'rating', 'number']);
 function subtitleOf(r) {
   const m = MODULE[r.module];
   const tk = typeof m.title === 'string' ? m.title : null;
@@ -976,9 +992,17 @@ function roomFact(room) {
 
 async function calendarCard(cal, t) {
   const setUp = !!(await google.clientId());
-  const head = `<div class="label-row"><span class="label">Calendar</span>${setUp ? `<span class="row-actions"><button type="button" class="link" data-action="gtasks-sync">Google Tasks</button><button type="button" class="link" data-action="gcal-refresh">${cal.at ? 'Refresh' : 'Connect'}</button></span>` : ''}</div>`;
+  const lastSync = await autosync.lastRun();
+  const ago = lastSync ? Math.max(1, Math.round((Date.now() - Date.parse(lastSync)) / 6e4)) : null;
+  const status = autosync.connected()
+    ? `<button type="button" class="link sync-pill" data-action="google-sync" title="Sync Gmail, Calendar, Tasks and Drive now">${ago === null ? 'Syncing…' : ago < 60 ? `Synced ${ago}m ago` : 'Sync now'} ↻</button>`
+    : `<button type="button" class="link" data-action="google-connect">Connect Google</button>`;
+  const head = `<div class="label-row"><span class="label">Calendar</span>${setUp ? status : ''}</div>`;
   if (!setUp) return `<section class="block cal-card">${head}<a class="hint-card" href="#/settings"><span class="dot" style="--c:#7AA2FF"></span><span class="t"><b>Connect Google Calendar</b><span>See your events here, turn them into tasks, and send tasks to your calendar.</span></span>${icon('chev', 16)}</a></section>`;
-  if (!cal.at) return `<section class="block cal-card">${head}<button type="button" class="hint-card" data-action="gcal-refresh"><span class="dot" style="--c:#7AA2FF"></span><span class="t"><b>Show your calendar</b><span>Sign in once with Google to load your events.</span></span>${icon('chev', 16)}</button></section>`;
+  if (!cal.at || !autosync.connected()) {
+    const cached = cal.at ? '' : '';
+    if (!cal.at) return `<section class="block cal-card">${head}<button type="button" class="hint-card" data-action="google-connect"><span class="dot" style="--c:#7AA2FF"></span><span class="t"><b>Connect Google</b><span>One tap: Calendar, Gmail job updates, Google Tasks and Drive travel stay in sync while the app is open.</span></span>${icon('chev', 16)}</button>${cached}</section>`;
+  }
   const t0 = startOfToday();
   const upcoming = cal.events.filter((e) => (e.start || '').slice(0, 10) >= t && !e.mine).slice(0, 6);
   const madeTasks = new Set(db.list('tasks').map((x) => x.data.fromEvent).filter(Boolean));
@@ -1293,8 +1317,8 @@ async function viewRecord(id, tab = 'view') {
   const longs = visible.filter((fd) => !isEmpty(r.data[fd.k]) && fd.type === 'long');
   const empty = visible.filter((fd) => isEmpty(r.data[fd.k]));
   const t0 = startOfToday();
-  const countdowns = m.fields.filter((fd) => fd.remind !== undefined && r.data[fd.k] && !isDone(r)).map((fd) => {
-    let d = parseDay(r.data[fd.k]);
+  const countdowns = m.fields.filter((fd) => fd.remind !== undefined && effectiveDate(r, fd) && !isDone(r)).map((fd) => {
+    let d = parseDay(effectiveDate(r, fd));
     if (fd.yearly) { d = new Date(t0.getFullYear(), d.getMonth(), d.getDate()); if (d < t0) d.setFullYear(d.getFullYear() + 1); }
     return { fd, days: diffDays(d, t0) };
   }).filter(({ fd, days }) => dateStillRelevant(fd, days)).sort((a, b) => a.days - b.days);
@@ -1907,6 +1931,16 @@ document.addEventListener('click', async (e) => {
       render();
       break;
     }
+    case 'google-connect':
+    case 'google-sync': {
+      try {
+        const r = a === 'google-connect' ? await autosync.connect() : (await autosync.run()) || {};
+        const bits = [r.jobs && `${r.jobs} job update${r.jobs === 1 ? '' : 's'}`, r.tasks && `${r.tasks} task${r.tasks === 1 ? '' : 's'}`, r.places && `${r.places} place${r.places === 1 ? '' : 's'}`].filter(Boolean);
+        toast(r.errors?.length ? r.errors[0] : bits.length ? `Synced · ${bits.join(', ')} added` : 'Everything is up to date');
+      } catch (err) { toast(err.message || 'Google sign-in failed'); }
+      render();
+      break;
+    }
     case 'gmail-ignore': await gmail.ignore(el.dataset.msg); render(); break;
     case 'gmail-reset': await gmail.resetScan(); toast('Next scan starts from scratch.'); break;
     case 'starter-links': {
@@ -2158,7 +2192,11 @@ async function boot() {
   window.addEventListener('hashchange', render);
   await render();
   sync.initSync();
-  if (google.hasToken(google.SCOPES.calendar)) gcal.refreshEvents().then(() => gcal.flush()).then(() => queueRender()).catch(() => {});
+  autosync.start((r) => {
+    const n = (r.jobs || 0) + (r.tasks || 0) + (r.places || 0);
+    if (n) toast(`Synced from Google · ${n} new`);
+    queueRender();
+  });
   retryPending();
   window.addEventListener('online', retryPending);
   if ('serviceWorker' in navigator && location.protocol === 'https:') {
