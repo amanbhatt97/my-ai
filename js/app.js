@@ -235,6 +235,7 @@ async function viewNow() {
   const cal = await gcal.cachedEvents();
   const calPending = (await gcal.pending()).length;
   const calSetUp = !!(await google.clientId());
+  const nudgeList = await nudges();
   const weekGoals = db.list('goals').filter((r) => r.data.horizon === 'week' && r.data.status !== 'dropped');
   const doneToday = db.list('tasks').filter((r) => r.data.completedOn === t).length;
   const taskTotal = tasks.length + doneToday;
@@ -259,6 +260,7 @@ async function viewNow() {
   ${setupCard()}
   ${mailCount ? `<a class="setup-card" href="#/inbox"><span class="mono small">GMAIL · ${mailCount}</span><span class="setup-next">Job updates to review</span></a>` : ''}
   ${pinnedLinks()}
+  ${nudgesHtml(nudgeList)}
   <div class="grid-2">
     <section class="block">
       <span class="label">Next</span>
@@ -319,6 +321,76 @@ async function viewNow() {
       <button type="button" class="btn primary wide" data-action="record">${icon('mic', 18)} Speak about your day</button>
     </section>
   </div>`;
+}
+
+// ── suggestions: small nudges based on what's in the app ───────────────
+async function nudges() {
+  const out = [];
+  const now = new Date();
+  const t = todayStr();
+  const t0 = startOfToday();
+  const ago = (s) => (s ? diffDays(t0, parseDay(s)) : Infinity);
+  const dismissed = (await db.kvGet('nudgeDismissed', {}));
+
+  const reviews = db.list('reviews').map((r) => r.data);
+  const lastWeekly = reviews.filter((r) => r.period === 'week').map((r) => r.date).sort().pop();
+  if ((now.getDay() === 0 || now.getDay() === 6 || ago(lastWeekly) >= 10) && ago(lastWeekly) >= 6) {
+    out.push({ key: 'review', text: lastWeekly ? `Weekly review: last one was ${ago(lastWeekly)} days ago.` : 'Do your first weekly review. 15 minutes.', href: '#/new/reviews?period=week', cta: 'Start' });
+  }
+  if (now.getDate() <= 3) {
+    const month = t.slice(0, 7);
+    if (!reviews.some((r) => r.period === 'month' && (r.date || '').slice(0, 7) === month)) out.push({ key: 'mreview', text: 'New month: review last month and set this one.', href: '#/new/reviews?period=month', cta: 'Review' });
+  }
+  if (!db.list('goals').some((g) => g.data.horizon === 'week' && g.data.status !== 'dropped' && g.data.status !== 'achieved')) {
+    out.push({ key: 'weekgoals', text: "No goals for this week. Pick your top 3.", href: '#/new/goals?horizon=week', cta: 'Set' });
+  }
+
+  const tasks = db.list('tasks').filter((r) => r.data.status !== 'done');
+  const overdue = tasks.filter((r) => r.data.due && r.data.due < t);
+  if (overdue.length >= 3) out.push({ key: 'overdue', text: `${overdue.length} overdue tasks. Reschedule or drop them.`, href: '#/m/tasks', cta: 'Review' });
+  const inbox = tasks.filter((r) => r.data.status === 'inbox');
+  if (inbox.length >= 5) out.push({ key: 'inbox', text: `${inbox.length} tasks in the inbox. Decide when each happens.`, href: '#/m/tasks/inbox', cta: 'Sort' });
+
+  const jobs = db.list('jobs');
+  const silent = jobs.filter((j) => j.data.status === 'applied' && ago(j.data.appliedOn) >= 14 && !(j.data.nextActionDate && j.data.nextActionDate >= t));
+  if (silent.length) out.push({ key: 'silent', text: `${silent.length} application${silent.length === 1 ? '' : 's'} with no reply for 2+ weeks. Follow up or mark ghosted.`, href: '#/m/jobs/applied', cta: 'Open' });
+  const toApply = jobs.filter((j) => j.data.status === 'to apply' && ago(j.createdAt.slice(0, 10)) >= 5);
+  if (toApply.length) out.push({ key: 'toapply', text: `${toApply.length} job${toApply.length === 1 ? '' : 's'} saved but not applied to yet.`, href: '#/m/jobs/to%20apply', cta: 'Apply' });
+  const gm = (await db.kvGet('gmail')) || {};
+  const lastScan = await db.kvGet('gmailLastScan');
+  if (gm.clientId && jobs.length && (!lastScan || ago(lastScan.slice(0, 10)) >= 3)) out.push({ key: 'scan', text: 'Check Gmail for new job replies.', href: '#/inbox', cta: 'Scan' });
+
+  if (now.getHours() >= 18) {
+    for (const h of db.list('habits').filter((x) => x.data.active !== false)) {
+      const log = h.data.log || {};
+      const st = streak(log);
+      if (!log[t] && st >= 2) { out.push({ key: `habit-${h.id}`, text: `Keep your ${st}-day ${h.data.name} streak alive today.`, action: 'habit', id: h.id, cta: 'Done' }); break; }
+    }
+  }
+
+  const lastJ = db.list('journal').map((r) => (r.data.at || '').slice(0, 10)).sort().pop();
+  if (ago(lastJ) >= 3) out.push({ key: 'journal', text: lastJ ? `No journal entry for ${ago(lastJ)} days. Talk for 30 seconds.` : 'Try the voice journal: talk about your day for 30 seconds.', action: 'record', cta: 'Speak' });
+
+  if (db.list('accounts').length && now.getDate() >= 2 && !db.list('networth').some((r) => r.data.month === t.slice(0, 7))) {
+    out.push({ key: 'networth', text: "Log this month's net worth snapshot.", href: `#/new/networth?month=${t.slice(0, 7)}`, cta: 'Log' });
+  }
+  if (!(await db.kvGet('sync')) && db.all().length >= 15) out.push({ key: 'sync', text: 'Your data is only on this device. Turn on encrypted sync.', href: '#/settings', cta: 'Set up' });
+
+  return out.filter((n) => dismissed[n.key] !== t);
+}
+
+function nudgesHtml(list) {
+  if (!list.length) return '';
+  return `<section class="block nudges" aria-label="Suggestions">
+    <span class="label">Suggestions</span>
+    <ul>${list.slice(0, 3).map((n) => `<li>
+      <span class="nudge-text">${esc(n.text)}</span>
+      <span class="nudge-actions">
+        ${n.href ? `<a class="btn primary small" href="${esc(n.href)}">${esc(n.cta)}</a>` : `<button type="button" class="btn primary small" data-action="${n.action}"${n.id ? ` data-id="${n.id}"` : ''}>${esc(n.cta)}</button>`}
+        <button type="button" class="icon-btn sm" data-action="nudge-dismiss" data-key="${esc(n.key)}" aria-label="Hide for today">×</button>
+      </span>
+    </li>`).join('')}</ul>
+  </section>`;
 }
 
 function calendarHtml(cal) {
@@ -1079,6 +1151,15 @@ document.addEventListener('click', async (e) => {
       } catch (err) {
         toast(err.message || 'Calendar failed');
       }
+      render();
+      break;
+    }
+    case 'nudge-dismiss': {
+      const d = await db.kvGet('nudgeDismissed', {});
+      const t = todayStr();
+      for (const k of Object.keys(d)) if (d[k] !== t) delete d[k];
+      d[el.dataset.key] = t;
+      await db.kvSet('nudgeDismissed', d);
       render();
       break;
     }
