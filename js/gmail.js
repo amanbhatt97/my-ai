@@ -4,6 +4,7 @@
 
 import * as db from './db.js';
 import * as google from './google.js';
+import { isDone } from './schemas.js';
 
 const API = 'https://gmail.googleapis.com/gmail/v1/users/me';
 const ATS = /(greenhouse|lever\.co|workday|myworkdayjobs|ashby|smartrecruiters|icims|jobvite|taleo|successfactors|linkedin|naukri|instahyre|indeed|wellfound|hirist|cutshort|iimjobs|foundit|monster|glassdoor|keka|darwinbox|zoho|freshteam|recruitee|workable|breezy|bamboohr|gmail|outlook|yahoo|google)/i;
@@ -92,6 +93,18 @@ function classify(e) {
 const clean = (s) => s.replace(/\s+/g, ' ').replace(/^[\s"'“”-]+|[\s"'“”.,!:|-]+$/g, '').trim();
 const COMPANY_STOP = /\b(careers?|recruit(ing|ment|er|ers)?|talent( acquisition)?( team)?|hiring( team)?|team|jobs?|hr|people|no-?reply|notifications?|do not reply|via .*)\b/gi;
 
+const FREE_MAIL = /^(gmail|googlemail|outlook|hotmail|live|yahoo|icloud|me|proton|protonmail|rediffmail|zoho)$/i;
+const NOT_COMPANY = /(\d{1,2}[:.]\d{2}|\b\d{1,2}\s?(am|pm)\b|\b(am|pm|ist|utc|gmt|pst|est)\b|\b(mon|tues?|wed(nes)?|thu(rs)?|fri|sat(ur)?|sun)(day)?\b|\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\b|\b(today|tomorrow|interview|round|call|meeting|link|zoom|google meet|teams)\b|^\d)/i;
+const okCompany = (c) => c && !/^(our|your|this|the|a|an|you|us)$/i.test(c) && !ATS.test(c) && !NOT_COMPANY.test(c) && c.split(' ').length <= 5;
+
+export function domainOf(email) {
+  const parts = ((email || '').split('@')[1] || '').toLowerCase().split('.');
+  const sld = parts.length >= 2 ? parts[parts.length - 2] : '';
+  // careers.company.co.in → company
+  const base = ['co', 'com', 'org', 'net', 'ac'].includes(sld) && parts.length >= 3 ? parts[parts.length - 3] : sld;
+  return base && !ATS.test(base) && !FREE_MAIL.test(base) && base.length > 1 ? base : '';
+}
+
 function companyOf(e) {
   const pats = [
     /application (?:to|at|with) (.{2,50}?)(?:\s+for\b|\s+has\b|\s+was\b|[!.,:|(\-–]|$)/i,
@@ -105,16 +118,25 @@ function companyOf(e) {
       const m = text.match(p);
       if (m) {
         const c = clean(m[1]).replace(/^the /i, '');
-        if (c && !/^(our|your|this|the|a|an)$/i.test(c) && !ATS.test(c) && c.split(' ').length <= 6) return c;
+        if (okCompany(c)) return c;
       }
     }
   }
+  // a company's own email domain beats the sender's name (often the recruiter's)
+  const d = domainOf(e.fromEmail);
+  if (d) return d[0].toUpperCase() + d.slice(1);
+  // job platforms put the company in the sender name: "Acme via Greenhouse", "Acme Recruiting"
   const fromName = clean((e.fromName || '').replace(COMPANY_STOP, ' '));
-  if (fromName && !ATS.test(fromName)) return fromName;
-  const domain = (e.fromEmail.split('@')[1] || '').split('.');
-  const sld = domain.length >= 2 ? domain[domain.length - 2] : '';
-  if (sld && !ATS.test(sld) && sld.length > 2) return sld[0].toUpperCase() + sld.slice(1);
+  if (okCompany(fromName) && ATS.test(e.fromEmail) && !/^[A-Z][a-z]+ [A-Z][a-z]+$/.test(fromName)) return fromName;
   return '';
+}
+
+// "2:00 PM IST", "Tue, 25 Nov at 5 pm" → shown in the job's next action
+function interviewWhen(e) {
+  const text = `${e.subject} ${e.snippet}`;
+  const time = text.match(/\b\d{1,2}(?:[:.]\d{2})?\s?(?:am|pm)(?:\s?(?:ist|utc|gmt))?\b/i);
+  const date = text.match(/\b(?:(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*,?\s)?\d{1,2}(?:st|nd|rd|th)?\s(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b/i);
+  return [date && date[0], time && time[0]].filter(Boolean).join(', ');
 }
 
 function roleOf(e) {
@@ -163,10 +185,14 @@ async function aiExtract(emails) {
 // ── matching to existing jobs ──────────────────────────────────────────
 const norm = (s) => (s || '').toLowerCase().replace(/\b(pvt|private|ltd|limited|inc|llc|technologies|technology|labs|solutions|india|software|services|corp|co)\b/g, '').replace(/[^a-z0-9]/g, '');
 
-function findJob(company, threadId) {
+function findJob(company, threadId, domain = '') {
   const jobs = db.list('jobs');
   const byThread = jobs.find((j) => (j.data.emails || []).some((m) => m.threadId === threadId));
   if (byThread) return byThread;
+  if (domain) {
+    const byDomain = jobs.filter((j) => (j.data.emails || []).some((m) => m.domain === domain) || norm(j.data.company) === domain);
+    if (byDomain.length) return byDomain.sort((a, b) => (isDone(a) - isDone(b)) || b.updatedAt.localeCompare(a.updatedAt))[0];
+  }
   const n = norm(company);
   if (!n) return null;
   return jobs.find((j) => { const c = norm(j.data.company); return c && (c === n || c.includes(n) || n.includes(c)); }) || null;
@@ -215,7 +241,10 @@ export async function scan({ useAi, onProgress = () => {} }) {
       company = companyOf(e);
       role = roleOf(e);
     }
-    const job = findJob(company, e.threadId);
+    if (role && company && role.toLowerCase() === company.toLowerCase()) role = '';
+    if (role && /\d{1,2}[:.]\d{2}|\b(am|pm|ist)\b/i.test(role)) role = role.replace(/\s*(at\s+)?\d{1,2}[:.]\d{2}.*$/i, '').trim();
+    const domain = domainOf(e.fromEmail);
+    const job = findJob(company, e.threadId, domain);
     if (job) {
       const cur = RANK[job.data.status] ?? 0;
       const nxt = RANK[status] ?? 0;
@@ -225,6 +254,7 @@ export async function scan({ useAi, onProgress = () => {} }) {
     suggestions.push({
       msgId: e.id, threadId: e.threadId, date: e.date, from: e.fromName || e.fromEmail, subject: e.subject, snippet: e.snippet.slice(0, 240),
       kind: job ? 'update' : 'new', status, company: company || '', role: role || '', jobId: job ? job.id : null,
+      domain, when: status === 'interview' ? interviewWhen(e) : '',
     });
   }
   // keep the most recent 5000 seen ids
@@ -248,11 +278,11 @@ export async function accept(msgId, overrides = {}) {
   const s = list.find((x) => x.msgId === msgId);
   if (!s) return null;
   const v = { ...s, ...overrides };
-  const email = { id: s.msgId, threadId: s.threadId, subject: s.subject, date: s.date, status: v.status };
+  const email = { id: s.msgId, threadId: s.threadId, subject: s.subject, date: s.date, status: v.status, domain: s.domain || '' };
   let rec;
   // Re-resolve at accept time: an earlier accept in this session may have created the job.
   let job = v.jobId && db.get(v.jobId);
-  if (!job || job.deletedAt) job = findJob(v.company, s.threadId);
+  if (!job || job.deletedAt) job = findJob(v.company, s.threadId, s.domain || '');
   if (job) {
     const patch = { emails: [...(job.data.emails || []).filter((m) => m.id !== s.msgId), email] };
     const cur = RANK[job.data.status] ?? 0;
@@ -261,7 +291,8 @@ export async function accept(msgId, overrides = {}) {
     if (nxt > cur || (v.status === 'rejected' && job.data.status !== 'rejected')) patch.status = v.status;
     if (v.status === 'applied' && !job.data.appliedOn) patch.appliedOn = s.date;
     if (v.role && !job.data.role) patch.role = v.role;
-    if (patch.status === 'interview' && !job.data.nextAction) patch.nextAction = 'Prepare for interview';
+    if (patch.status === 'interview') patch.nextAction = s.when ? `Interview · ${s.when}` : (job.data.nextAction || 'Prepare for interview');
+    if (patch.status === 'rejected' || patch.status === 'offer') { patch.nextAction = ''; patch.nextActionDate = ''; }
     rec = await db.update(job.id, patch);
   } else {
     const followUp = new Date(Date.parse(s.date) + 10 * 864e5);
@@ -272,7 +303,7 @@ export async function accept(msgId, overrides = {}) {
       status: v.status,
       appliedOn: v.status === 'applied' ? s.date : '',
       source: /linkedin/i.test(s.from) ? 'linkedin' : /naukri/i.test(s.from) ? 'naukri' : '',
-      nextAction: v.status === 'applied' ? 'Follow up if no reply' : v.status === 'interview' ? 'Prepare for interview' : '',
+      nextAction: v.status === 'applied' ? 'Follow up if no reply' : v.status === 'interview' ? (s.when ? `Interview · ${s.when}` : 'Prepare for interview') : '',
       nextActionDate: v.status === 'applied' ? `${followUp.getFullYear()}-${p(followUp.getMonth() + 1)}-${p(followUp.getDate())}` : '',
       emails: [email],
     });

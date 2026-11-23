@@ -1131,9 +1131,10 @@ async function viewRecord(id, tab = 'view') {
   ${isJournal ? `<section class="block"><span class="label">Entry</span><p class="prose big">${esc(r.data.text || statusText(r.data.status) || 'Empty entry')}</p></section>${journalExtras(r)}` : ''}
   ${filled.length ? `<section class="block"><span class="label">Details</span><dl class="spec">${filled.map((fd) => `<div><dt>${esc(fd.label)}</dt><dd>${valueHtml(fd, r.data[fd.k], r)}</dd></div>`).join('')}</dl></section>` : ''}
   ${longs.map((fd) => `<section class="block"><span class="label">${esc(fd.label)}</span><p class="prose">${esc(r.data[fd.k])}</p></section>`).join('')}
-  ${r.module === 'jobs' && (r.data.emails || []).length ? `<section class="block"><span class="label">Emails</span><ul class="heads">${r.data.emails.slice().sort((a, b) => b.date.localeCompare(a.date)).map((em) => `<li><a href="${esc(gmail.mailLink(em.threadId))}" target="_blank" rel="noopener"><span>${esc(em.subject)}</span><span class="mono small muted">${fmtDay(em.date)}</span></a></li>`).join('')}</ul></section>` : ''}
+  ${r.module === 'jobs' ? jobTimeline(r) : ''}
   ${empty.length && !deleted ? `<a class="add-more" href="#/r/${id}/edit"><b>+ Add details</b><span>${esc(empty.slice(0, 4).map((x) => x.label).join(', '))}${empty.length > 4 ? '…' : ''}</span></a>` : ''}
   <div class="record-foot">
+    ${r.module === 'jobs' && !deleted ? `<button class="btn small" type="button" data-action="merge-open" data-id="${id}">Merge into…</button>` : ''}
     ${deleted ? '' : `<button class="btn danger small" type="button" data-action="delete" data-id="${id}">Delete</button>`}
     <span class="mono">Updated ${fmtDay(r.updatedAt.slice(0, 10))}</span>
   </div>
@@ -1143,6 +1144,59 @@ async function viewRecord(id, tab = 'view') {
       : doneToggle ? `<button type="button" class="btn ${done ? '' : 'primary'}" data-action="toggle-done" data-id="${id}" data-k="${doneToggle.k}">${done ? 'Mark not done' : `Mark ${doneToggle.label.toLowerCase()}`}</button>`
       : isJournal ? '<button type="button" class="btn primary" data-action="record">New entry</button>' : ''}
   </div>`}`;
+}
+
+// One application's story: applied → screening → interview → result.
+function jobTimeline(r) {
+  const ev = [];
+  if (r.data.appliedOn) ev.push({ date: r.data.appliedOn, status: 'applied', text: 'Applied', href: '' });
+  for (const em of r.data.emails || []) ev.push({ date: em.date, status: em.status || '', text: em.subject, href: gmail.mailLink(em.threadId) });
+  if (!ev.length) return '';
+  ev.sort((a, b) => a.date.localeCompare(b.date) || (a.href ? 1 : -1));
+  // drop the plain "Applied" row if an application email covers the same day
+  const rows = ev.filter((e, i) => !(e.text === 'Applied' && ev.some((x, j) => j !== i && x.status === 'applied' && x.date === e.date)));
+  return `<section class="block"><span class="label">Timeline</span><ol class="jt">${rows.map((e) => `<li class="jt-${esc(e.status)}">
+    <span class="jt-date">${fmtDay(e.date)}</span>
+    <span class="jt-body">${e.status ? `<span class="pill ${e.status === 'rejected' ? 'late' : e.status === 'interview' || e.status === 'offer' ? 'soon' : 'ghost'}">${esc(e.status)}</span>` : ''}${e.href ? `<a href="${esc(e.href)}" target="_blank" rel="noopener">${esc(e.text)}</a>` : `<span>${esc(e.text)}</span>`}</span>
+  </li>`).join('')}</ol></section>`;
+}
+
+const JOB_RANK = { 'to apply': 0, applied: 1, screening: 2, interview: 3, offer: 4, accepted: 5, declined: 5, rejected: 5, ghosted: 5, withdrawn: 5 };
+async function mergeJobs(srcId, dstId) {
+  const src = db.get(srcId);
+  const dst = db.get(dstId);
+  if (!src || !dst) return;
+  const emails = [...(dst.data.emails || [])];
+  for (const em of src.data.emails || []) if (!emails.some((x) => x.id === em.id)) emails.push(em);
+  emails.sort((a, b) => a.date.localeCompare(b.date));
+  const patch = { emails };
+  // fill empty fields on the target from the source (company name stays the target's)
+  for (const fd of MODULE.jobs.fields) {
+    if (fd.hidden || fd.k === 'company' || fd.k === 'status') continue;
+    if (isEmpty(dst.data[fd.k]) && !isEmpty(src.data[fd.k])) patch[fd.k] = src.data[fd.k];
+  }
+  const latest = emails.filter((e) => e.status).pop();
+  const best = [dst.data.status, src.data.status].sort((a, b) => (JOB_RANK[b] ?? 0) - (JOB_RANK[a] ?? 0))[0];
+  patch.status = latest ? latest.status : best;
+  if (['rejected', 'offer', 'accepted', 'declined', 'withdrawn', 'ghosted'].includes(patch.status)) { patch.nextAction = ''; patch.nextActionDate = ''; }
+  else if (isEmpty(dst.data.nextAction) && src.data.nextAction) patch.nextAction = src.data.nextAction;
+  if (!dst.data.appliedOn || (src.data.appliedOn && src.data.appliedOn < dst.data.appliedOn)) patch.appliedOn = src.data.appliedOn || dst.data.appliedOn || '';
+  await db.update(dstId, patch);
+  await db.remove(srcId);
+}
+
+function openMerge(id) {
+  const r = db.get(id);
+  const others = db.list('jobs').filter((j) => j.id !== id).sort((a, b) => titleOf(a).localeCompare(titleOf(b)));
+  const sheet = $('#sheet');
+  sheet.innerHTML = `<div class="sheet-card" role="dialog" aria-modal="true" aria-label="Merge application">
+    <div class="grab"></div>
+    <span class="label">Merge “${esc(titleOf(r))}” into…</span>
+    <p class="small muted">Its emails and any missing details move to the one you pick, which keeps its own name. This one then goes to Trash.</p>
+    <label class="search-box">${icon('search', 16)}<input type="search" id="merge-q" placeholder="Find company" aria-label="Find company"></label>
+    <div class="merge-list" id="merge-list">${others.map((j) => `<button type="button" class="row" data-action="merge-into" data-src="${id}" data-dst="${j.id}" data-name="${esc(titleOf(j).toLowerCase())}"><span class="avatar" style="--c:${colorOf('jobs')}">${esc(titleOf(j).slice(0, 1).toUpperCase())}</span><span class="row-body"><span class="row-title">${esc(titleOf(j))}</span><span class="row-sub">${esc(j.data.status || '')}</span></span></button>`).join('') || '<p class="muted">No other applications.</p>'}</div>
+  </div>`;
+  sheet.classList.add('open');
 }
 
 function journalExtras(r) {
@@ -1568,6 +1622,15 @@ document.addEventListener('click', async (e) => {
       toast(`${MODULE[r.module].fields.find((x) => x.k === k).label}: ${fmtDay(v)}`, { undo: true });
       break;
     }
+    case 'merge-open': openMerge(id); break;
+    case 'merge-into': {
+      const dst = el.dataset.dst;
+      await mergeJobs(el.dataset.src, dst);
+      closeSheet();
+      toast(`Merged into ${titleOf(db.get(dst))}`);
+      location.hash = `#/r/${dst}`;
+      break;
+    }
     case 'gmail-ignore': await gmail.ignore(el.dataset.msg); render(); break;
     case 'gmail-reset': await gmail.resetScan(); toast('Next scan starts from scratch.'); break;
     case 'starter-links': {
@@ -1616,6 +1679,10 @@ document.addEventListener('input', (e) => {
     $('#list').innerHTML = listHtml(m, e.target.dataset.status, e.target.value);
   }
   if (e.target.id === 'global-q') $('#search-results').innerHTML = searchHtml(e.target.value);
+  if (e.target.id === 'merge-q') {
+    const q = e.target.value.trim().toLowerCase();
+    for (const b of document.querySelectorAll('#merge-list [data-name]')) b.hidden = q && !b.dataset.name.includes(q);
+  }
   if (e.target.matches('form.capture input')) {
     const box = $('#capture-results');
     const q = e.target.value.trim();
