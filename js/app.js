@@ -189,9 +189,17 @@ async function render() {
   currentBack = backFor(currentRoute);
   const view = VIEWS[currentRoute.name] || viewNow;
   const main = $('#main');
-  main.innerHTML = await view(...currentRoute.parts);
+  const html = await view(...currentRoute.parts);
+  const depth = routeDepth(currentRoute);
+  const dir = depth > lastDepth ? 'fwd' : depth < lastDepth ? 'back' : 'same';
+  lastDepth = depth;
+  main.innerHTML = html;
+  main.classList.remove('enter-fwd', 'enter-back', 'enter-same');
+  void main.offsetWidth;
+  if (!matchMedia('(prefers-reduced-motion: reduce)').matches) main.classList.add(`enter-${dir}`);
   main.focus({ preventScroll: true });
   window.scrollTo(0, 0);
+  updateTopbar();
   const top = tabFor(currentRoute);
   for (const a of document.querySelectorAll('.nav a, .side a[data-nav]')) a.classList.toggle('on', a.dataset.nav === top);
   renderSide();
@@ -211,6 +219,58 @@ async function hydrate() {
 
 // ── shared pieces ───────────────────────────────────────────────────────
 let currentBack = null;
+let lastDepth = 0;
+function routeDepth({ name, parts }) {
+  if (['now', 'plan', 'search', 'life'].includes(name)) return 0;
+  if (name === 'room') return 1;
+  if (name === 'm') return 2;
+  if (name === 'r') return parts[1] ? 4 : 3;
+  if (name === 'new') return 4;
+  return 2;
+}
+// compact bar that slides in once the big title scrolls away
+function updateTopbar() {
+  const bar = $('#topbar');
+  if (!bar) return;
+  const h1 = document.querySelector('main .top h1');
+  const title = h1 ? h1.textContent.trim().replace(/\\s+/g, ' ') : '';
+  const back = currentBack;
+  bar.innerHTML = `${back ? `<a class="tb-back" href="${esc(back.href)}" aria-label="Back to ${esc(back.name)}">${icon('back', 18)}</a>` : '<span class="tb-back"></span>'}<span class="tb-title">${esc(currentRoute.name === 'now' ? 'Home' : title)}</span><span class="tb-back"></span>`;
+}
+window.addEventListener('scroll', () => {
+  document.body.classList.toggle('scrolled', window.scrollY > 90);
+}, { passive: true });
+// swipe from the left edge to go back
+let swipe = null;
+window.addEventListener('touchstart', (e) => {
+  const t = e.touches[0];
+  swipe = t.clientX < 28 && currentBack && !$('#sheet').classList.contains('open') ? { x: t.clientX, y: t.clientY } : null;
+}, { passive: true });
+window.addEventListener('touchend', (e) => {
+  if (!swipe) return;
+  const t = e.changedTouches[0];
+  const dx = t.clientX - swipe.x; const dy = Math.abs(t.clientY - swipe.y);
+  if (dx > 80 && dy < 60 && currentBack) location.hash = currentBack.href;
+  swipe = null;
+}, { passive: true });
+// swipe a sheet down to close it
+let sheetDrag = null;
+document.addEventListener('touchstart', (e) => {
+  const card = e.target.closest && e.target.closest('.sheet-card');
+  sheetDrag = card && !recorder && (e.target.closest('.grab') || card.scrollTop <= 0) ? { y: e.touches[0].clientY, card } : null;
+}, { passive: true });
+document.addEventListener('touchmove', (e) => {
+  if (!sheetDrag) return;
+  const dy = e.touches[0].clientY - sheetDrag.y;
+  if (dy > 0) sheetDrag.card.style.transform = `translateY(${dy}px)`;
+}, { passive: true });
+document.addEventListener('touchend', (e) => {
+  if (!sheetDrag) return;
+  const dy = e.changedTouches[0].clientY - sheetDrag.y;
+  sheetDrag.card.style.transform = '';
+  if (dy > 110) closeSheet();
+  sheetDrag = null;
+}, { passive: true });
 function moduleOfRoute({ name, parts }) {
   if (name === 'm' || name === 'new') return (parts[0] || '').split('?')[0];
   if (name === 'r') return db.get(parts[0])?.module || '';
@@ -924,10 +984,17 @@ async function viewRoom(id) {
     const txt = x.days < 0 ? `${-x.days}d` : x.days === 0 ? 'Today' : `${x.days}d`;
     return `<a href="#/r/${x.r.id}"><span class="cd-badge ${cls}">${txt}</span><span class="t"><span>${esc(titleOf(x.r))}</span><span>${esc(x.label)} · ${x.days < 0 ? 'overdue' : rel(x.days)}</span></span></a>`;
   }).join('')}</div></section>` : ''}
-  <section class="block"><span class="label">In this room</span><ul class="simple">
-    ${room.modules.map((m) => `<li><a href="${collectionHref(m)}"><span class="l"><span>${esc(MODULE[m].name)}</span></span><span class="r">${db.list(m).length} ›</span></a></li>`).join('')}
-    ${(room.extra || []).map((e) => `<li><a href="${esc(e.href)}"><span class="l"><span>${esc(e.name)}</span></span><span class="r">›</span></a></li>`).join('')}
-  </ul></section>`;
+  ${room.modules.filter((m) => db.list(m).length).map((m) => {
+    const list = sortRecords(MODULE[m], db.list(m)).slice(0, 3);
+    const n = db.list(m).length;
+    return `<section class="block coll"><div class="coll-head"><a href="${collectionHref(m)}" class="coll-name">${esc(MODULE[m].name)} <span>${n}</span></a><span class="coll-actions"><a class="icon-btn sm" href="#/new/${m}" aria-label="Add to ${esc(MODULE[m].name)}">${icon('plus', 16)}</a></span></div>
+      <div class="list">${list.map((r) => row(r)).join('')}</div>
+      ${n > 3 ? `<a class="see-all" href="${collectionHref(m)}">See all ${n} ›</a>` : ''}</section>`;
+  }).join('')}
+  ${room.modules.some((m) => !db.list(m).length) || (room.extra || []).length ? `<section class="block"><span class="label">Add to ${esc(room.name)}</span><div class="chips">
+    ${room.modules.filter((m) => !db.list(m).length).map((m) => `<a class="chip" href="${m === 'journal' ? '#/journal' : `#/new/${m}`}">+ ${esc(MODULE[m].name)}</a>`).join('')}
+    ${(room.extra || []).map((e) => `<a class="chip" href="${esc(e.href)}">${esc(e.name)}</a>`).join('')}
+  </div></section>` : ''}`;
 }
 
 function renderSide() { /* no sidebar: one layout everywhere */ }
@@ -1163,7 +1230,7 @@ async function viewRecord(id, tab = 'view') {
   const done = isDone(r);
   const doneToggle = m.fields.find((x) => x.type === 'check' && ['done', 'settled'].includes(x.k));
 
-  return `${header(title, { kicker: `<span class="dot" style="--c:${colorOf(r.module)}"></span>${esc(m.name)}`, sub: isJournal ? '' : subtitleOf(r), actions: deleted ? '' : `<a class="link" href="#/r/${id}/edit">Edit</a>` })}
+  return `<div class="room-head item-head" style="--c:${colorOf(r.module)}">${header(title, { kicker: `<span class="dot" style="--c:${colorOf(r.module)}"></span>${esc(m.name)}`, sub: isJournal ? '' : subtitleOf(r), actions: deleted ? '' : `<a class="link" href="#/r/${id}/edit">Edit</a>` })}</div>
   ${trashNote}${tabs}
   ${statusField ? `<section class="block">
     <span class="label">${esc(statusField.label)}</span>
@@ -1471,6 +1538,40 @@ function openRenew(id, k) {
   sheet.classList.add('open');
 }
 
+function openPeek(id) {
+  const r = db.get(id);
+  if (!r || !MODULE[r.module]) { go(`#/r/${id}`); return; }
+  const m = MODULE[r.module];
+  const tk = typeof m.title === 'string' ? m.title : null;
+  const facts = m.fields.filter((fd) => !fd.hidden && fd.k !== tk && fd.k !== m.status && fd.type !== 'long' && fd.remind === undefined && !isEmpty(r.data[fd.k])).slice(0, 4);
+  const cds = countdownsOf(r).slice(0, 3);
+  const sf = m.status && m.fields.find((x) => x.k === m.status);
+  const done = isDone(r);
+  const doneToggle = m.fields.find((x) => x.type === 'check' && ['done', 'settled'].includes(x.k));
+  const title = r.module === 'journal' ? `${fmtDay(r.data.at)} · ${fmtTime(r.data.at)}` : titleOf(r);
+  const sheet = $('#sheet');
+  sheet.innerHTML = `<div class="sheet-card peek" role="dialog" aria-modal="true" aria-label="${esc(title)}" style="--c:${colorOf(r.module)}">
+    <div class="grab"></div>
+    <div class="peek-head"><span class="kicker"><span class="dot" style="--c:${colorOf(r.module)}"></span>${esc(m.name)}</span><a class="link" href="#/r/${id}" data-action="close-sheet">Open ›</a></div>
+    <h2 class="sheet-title">${esc(title)}</h2>
+    ${r.module === 'journal' ? `<p class="prose">${esc((r.data.text || statusText(r.data.status) || '').slice(0, 280))}</p>` : subtitleOf(r) ? `<p class="small muted peek-sub">${esc(subtitleOf(r))}</p>` : ''}
+    ${cds.length ? `<div class="countdowns">${cds.map(({ fd, days }) => {
+      const cls = days < 0 ? 'late' : days <= (fd.remind || 0) ? 'soon' : '';
+      const v = days < 0 ? `${-days}d late` : days === 0 ? 'Today' : `${days} ${days === 1 ? 'day' : 'days'}`;
+      return fd.yearly ? `<div class="cd ${cls}"><span class="cd-v">${v}</span><span class="cd-k">${esc(fd.label)}</span></div>` : `<button type="button" class="cd ${cls}" data-action="renew" data-id="${id}" data-k="${fd.k}"><span class="cd-v">${v}</span><span class="cd-k">${esc(fd.label)}</span><span class="cd-act">Update</span></button>`;
+    }).join('')}</div>` : ''}
+    ${sf ? `<div class="chips status-chips peek-chips">${sf.options.map((o) => `<button type="button" class="chip ${r.data[m.status] === o ? 'on' : ''}" data-action="set-status" data-id="${id}" data-v="${esc(o)}">${esc(o)}</button>`).join('')}</div>` : ''}
+    ${facts.length ? `<dl class="spec">${facts.map((fd) => `<div><dt>${esc(fd.label)}</dt><dd>${valueHtml(fd, r.data[fd.k], r)}</dd></div>`).join('')}</dl>` : ''}
+    <div class="form-actions">
+      <a class="btn" href="#/r/${id}/edit" data-action="close-sheet">Edit</a>
+      ${r.module === 'tasks' && !done ? `<button type="button" class="btn primary" data-action="set-status" data-id="${id}" data-v="done">Mark done</button>`
+        : doneToggle ? `<button type="button" class="btn primary" data-action="toggle-done" data-id="${id}" data-k="${doneToggle.k}">${done ? 'Mark not done' : `Mark ${doneToggle.label.toLowerCase()}`}</button>`
+        : `<a class="btn primary" href="#/r/${id}" data-action="close-sheet">Open</a>`}
+    </div>
+  </div>`;
+  sheet.classList.add('open');
+}
+
 function closeSheet() { const s = $('#sheet'); s.classList.remove('open'); s.innerHTML = ''; }
 
 // ── recorder sheet ──────────────────────────────────────────────────────
@@ -1527,6 +1628,12 @@ async function stopRecorder(save) {
 
 // ── events ──────────────────────────────────────────────────────────────
 document.addEventListener('click', async (e) => {
+  const peekLink = !e.metaKey && !e.ctrlKey && !e.shiftKey && e.target.closest('a.row[href^="#/r/"], .attn a[href^="#/r/"], .tl a.what[href^="#/r/"], .simple a[href^="#/r/"]');
+  if (peekLink && !e.target.closest('#sheet') && !e.target.closest('[data-action]')) {
+    e.preventDefault();
+    openPeek(peekLink.getAttribute('href').split('/')[2]);
+    return;
+  }
   const el = e.target.closest('[data-action]');
   if (!el) {
     if (e.target.id === 'sheet') { if (recorder) return; closeSheet(); }
@@ -1642,12 +1749,14 @@ document.addEventListener('click', async (e) => {
       if (r.module === 'tasks' && el.dataset.v === 'done' && !r.data.completedOn) patch.completedOn = todayStr();
       await db.update(id, patch);
       if (r.module === 'tasks' && el.dataset.v === 'done') gtasks.completeIfLinked(id);
+      if ($('#sheet').classList.contains('open')) closeSheet();
       toast(`${m.fields.find((x) => x.k === m.status).label}: ${el.dataset.v}`, { undo: true });
       break;
     }
     case 'toggle-done': {
       const r = db.get(id);
       await db.update(id, { [el.dataset.k]: !r.data[el.dataset.k] });
+      if ($('#sheet').classList.contains('open')) closeSheet();
       toast('Updated', { undo: true });
       break;
     }

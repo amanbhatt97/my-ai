@@ -471,3 +471,47 @@ button.cd:hover { border-color: var(--text-2); }
 .chip.mini { min-height: 30px; padding: 0 10px; font-size: 12px; flex-shrink: 0; text-transform: none; }
 .q-cal { min-height: 36px; }
 .q-cal span { font-size: 14px; color: var(--text-2); }
+
+/* ── v3.1: less back-and-forth, more native feel ─────────────────────── */
+:root { --radius: 22px; }
+.room-card, .card, .attn a, .hint-card, .cd, .spec, .fgroup, .capture, .stat { box-shadow: 0 1px 0 rgba(255,255,255,0.03) inset, 0 10px 30px -22px rgba(0,0,0,0.9); }
+:root[data-theme="light"] .room-card, :root[data-theme="light"] .hint-card, :root[data-theme="light"] .spec, :root[data-theme="light"] .capture, :root[data-theme="light"] .cd { box-shadow: 0 1px 2px rgba(0,0,0,0.04), 0 10px 26px -20px rgba(20,30,50,0.25); }
+.room-card { min-height: 128px; transition: transform 0.15s ease; }
+.room-card:active { transform: scale(0.98); }
+
+/* page transitions */
+@keyframes in-fwd { from { opacity: 0; transform: translateX(28px); } to { opacity: 1; transform: none; } }
+@keyframes in-back { from { opacity: 0; transform: translateX(-28px); } to { opacity: 1; transform: none; } }
+@keyframes in-same { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+main.enter-fwd { animation: in-fwd 0.26s cubic-bezier(0.2, 0.8, 0.2, 1); }
+main.enter-back { animation: in-back 0.26s cubic-bezier(0.2, 0.8, 0.2, 1); }
+main.enter-same { animation: in-same 0.22s ease-out; }
+
+/* compact top bar on scroll */
+.topbar { position: fixed; z-index: 9; top: 0; left: 0; right: 0; height: calc(env(safe-area-inset-top) + 48px); padding: env(safe-area-inset-top) 8px 0; display: grid; grid-template-columns: 44px 1fr 44px; align-items: center; background: color-mix(in srgb, var(--bg) 82%, transparent); backdrop-filter: blur(18px) saturate(140%); -webkit-backdrop-filter: blur(18px) saturate(140%); border-bottom: 1px solid var(--line); transform: translateY(-100%); transition: transform 0.2s ease; }
+body.scrolled .topbar { transform: none; }
+.tb-back { width: 44px; height: 44px; display: inline-flex; align-items: center; justify-content: center; color: var(--text); }
+.tb-title { text-align: center; font: 600 16px var(--display); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sync-dot { z-index: 12; }
+
+/* item page head tinted by its room */
+.item-head { padding-bottom: 6px; }
+.item-head .top { padding-bottom: 12px; }
+
+/* rooms: items inline */
+.coll { margin-bottom: 22px; }
+.coll-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px; }
+.coll-name { font: 600 17px var(--display); display: inline-flex; align-items: baseline; gap: 8px; }
+.coll-name span { font: 500 13px var(--font); color: var(--muted); }
+.coll .list { margin-bottom: 4px; }
+.see-all { display: inline-flex; min-height: 40px; align-items: center; font-size: 14px; color: var(--accent-text); font-weight: 500; }
+
+/* peek sheet */
+.peek { max-height: 86vh; overflow-y: auto; border-top: 3px solid var(--c); }
+.peek-head { display: flex; justify-content: space-between; align-items: center; }
+.peek-head .kicker { margin: 0; }
+.peek-sub { margin: -6px 0 0; }
+.peek .countdowns { margin-bottom: 0; }
+.peek-chips { margin: 0; }
+.peek .spec { background: var(--bg); }
+.sheet-card { transition: transform 0.12s ease-out; }
