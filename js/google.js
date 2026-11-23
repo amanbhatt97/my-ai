@@ -77,6 +77,10 @@ export async function prepare() {
 
 const isIosStandalone = () => /iphone|ipad|ipod/i.test(navigator.userAgent) && (navigator.standalone || matchMedia('(display-mode: standalone)').matches);
 export const redirectUri = () => location.origin + location.pathname;
+export const signInMode = () => (isIosStandalone() ? 'redirect' : 'popup');
+export function tokenInfo() { const t = load(); return t ? { scopes: t.scopes || [], expiresIn: Math.round((t.expiry - Date.now()) / 60000) } : null; }
+export function storedError() { try { return lastError || sessionStorage.getItem('google-last-error') || ''; } catch { return lastError; } }
+export function recordError(msg) { lastError = msg; try { sessionStorage.setItem('google-last-error', msg); } catch { /* ignore */ } }
 
 function redirectSignIn(scopes) {
   try { sessionStorage.setItem('google-return', location.hash || '#/now'); } catch { /* ignore */ }
@@ -94,8 +98,19 @@ function redirectSignIn(scopes) {
 }
 
 // Called at start-up: picks up the token when Google sends us back.
+export let lastError = '';
 export function consumeRedirect() {
   const h = location.hash;
+  if (h.includes('error=') && h.includes('state=life-google')) {
+    // Google sent us back with an error (denied, wrong setup…): remember it and show the app normally
+    const params = new URLSearchParams(h.slice(1));
+    lastError = `${params.get('error')}${params.get('error_description') ? `: ${params.get('error_description')}` : ''}`;
+    try { sessionStorage.setItem('google-last-error', lastError); } catch { /* ignore */ }
+    let back = '#/settings';
+    try { back = sessionStorage.getItem('google-return') || back; sessionStorage.removeItem('google-return'); } catch { /* ignore */ }
+    history.replaceState(null, '', location.pathname + back);
+    return false;
+  }
   if (!h.includes('access_token=')) return false;
   const params = new URLSearchParams(h.slice(1));
   if (params.get('state') !== 'life-google') return false;
@@ -117,12 +132,13 @@ function request(scopes) {
   return new Promise((resolve, reject) => {
     pending = {
       done: (resp) => {
-        if (resp.error) { reject(new Error(resp.error_description || resp.error)); return; }
+        if (resp.error) { recordError(`${resp.error}${resp.error_description ? `: ${resp.error_description}` : ''}`); reject(new Error(resp.error_description || resp.error)); return; }
         const granted = (resp.scope || '').split(' ').filter(Boolean);
         save({ token: resp.access_token, scopes: granted, expiry: Date.now() + Number(resp.expires_in || 3600) * 1000 });
         resolve(resp.access_token);
       },
       fail: (err) => {
+        recordError(`popup: ${err?.type || err?.message || 'unknown'}`);
         if (err?.type === 'popup_failed_to_open') { redirectSignIn(wanted); return; }
         reject(new Error(err?.type === 'popup_closed' ? 'Google sign-in was closed.' : (err?.message || 'Google sign-in failed.')));
       },

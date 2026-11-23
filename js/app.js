@@ -1725,6 +1725,8 @@ async function viewSettings() {
     </form>
     <p class="small muted">If the Google popup doesn't open (for example in the iPhone home-screen app), the app switches to Google's sign-in page instead. For that, add this exact address under <b>Authorized redirect URIs</b> in your Google OAuth client:</p>
     <p class="redirect-uri"><code>${esc(google.redirectUri())}</code> <button type="button" class="link" data-action="copy-redirect">Copy</button></p>
+    <div class="form-actions"><button type="button" class="btn" data-action="google-check">Check Google connection</button></div>
+    <div id="g-check" class="g-check" hidden></div>
   </section>
 
   <section class="block">
@@ -2304,6 +2306,44 @@ document.addEventListener('click', async (e) => {
       render();
       break;
     }
+    case 'google-check': {
+      const box = $('#g-check'); if (!box) break;
+      box.hidden = false; box.innerHTML = '<p class="muted small">Checking…</p>';
+      const lines = [];
+      const add = (ok, title, detail = '') => lines.push({ ok, title, detail });
+      const id = await google.clientId();
+      add(!!id, id ? 'Client ID is saved on this device' : 'No client ID on this device', id ? `${id.slice(0, 14)}…` : 'Paste it above and press Save.');
+      const mode = google.signInMode();
+      add(true, mode === 'popup' ? 'Sign-in opens in a popup' : 'Sign-in goes to Google’s page and comes back', mode === 'popup' ? '' : `This needs ${google.redirectUri()} under Authorized redirect URIs.`);
+      add(true, 'This page’s address', location.origin + location.pathname);
+      const err = google.storedError();
+      if (err) add(false, 'Last Google sign-in error', err);
+      const tok = google.tokenInfo();
+      if (!tok || tok.expiresIn <= 0) add(false, 'Not signed in to Google right now', 'Tap Connect Google on Home, then run this check again.');
+      else {
+        add(true, `Signed in (${tok.expiresIn} min left)`, tok.scopes.map((x) => x.split('/').pop()).join(', '));
+        const probe = async (name, url, scope) => {
+          const t = google.tokenFor(scope);
+          if (!t) { add(false, `${name}: permission not granted`, 'Tap Connect Google again and allow it.'); return; }
+          try {
+            const res = await fetch(url, { headers: { Authorization: `Bearer ${t}` } });
+            const j = await res.json().catch(() => ({}));
+            add(res.ok, `${name}: ${res.ok ? 'working' : `error ${res.status}`}`, res.ok ? '' : (j.error?.message || j.error_description || ''));
+          } catch (e2) { add(false, `${name}: could not connect`, e2.message); }
+        };
+        await probe('Calendar', 'https://www.googleapis.com/calendar/v3/calendars/primary/events?maxResults=1', google.SCOPES.calendar);
+        await probe('Gmail', 'https://gmail.googleapis.com/gmail/v1/users/me/profile', google.SCOPES.gmail);
+        await probe('Google Tasks', 'https://tasks.googleapis.com/tasks/v1/users/@me/lists?maxResults=1', google.SCOPES.tasks);
+      }
+      box.innerHTML = `<ul class="g-lines">${lines.map((l) => `<li class="${l.ok ? 'ok' : 'bad'}"><b>${l.ok ? '✓' : '✗'} ${esc(l.title)}</b>${l.detail ? `<span>${esc(l.detail)}</span>` : ''}</li>`).join('')}</ul><button type="button" class="link" data-action="google-check-copy">Copy these results</button>`;
+      box.dataset.text = lines.map((l) => `${l.ok ? 'OK' : 'X'} ${l.title}${l.detail ? ` — ${l.detail}` : ''}`).join('\n');
+      break;
+    }
+    case 'google-check-copy': {
+      const t = $('#g-check')?.dataset.text || '';
+      try { await navigator.clipboard.writeText(t); toast('Copied. Paste it to me.'); } catch { toast('Could not copy. Take a screenshot instead.'); }
+      break;
+    }
     case 'copy-redirect':
       try { await navigator.clipboard.writeText(google.redirectUri()); toast('Copied'); } catch { toast(google.redirectUri()); }
       break;
@@ -2565,6 +2605,7 @@ function queueRender(info) {
 
 async function boot() {
   google.consumeRedirect(); // back from Google's sign-in page
+  if (google.lastError) setTimeout(() => toast(`Google sign-in failed: ${google.lastError}`), 800);
   applyTheme(getTheme());
   matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => applyTheme(getTheme()));
   await db.init();

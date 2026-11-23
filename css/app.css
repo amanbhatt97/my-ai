@@ -1044,3 +1044,9 @@ main.enter-fwd, main.enter-back, main.enter-same { animation: in-same 0.18s ease
 .dict-note { margin: 0; }
 .center-links { justify-content: center; }
 .dict-roman label { font-size: 14px !important; text-transform: none !important; letter-spacing: 0 !important; font-family: var(--font) !important; }
+.g-check { margin-top: 12px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+.g-lines { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.g-lines li { display: flex; flex-direction: column; gap: 2px; font-size: 14px; }
+.g-lines li.ok b { color: var(--mark); font-weight: 600; }
+.g-lines li.bad b { color: var(--danger); font-weight: 600; }
+.g-lines li span { font-size: 12.5px; color: var(--muted); overflow-wrap: anywhere; }
