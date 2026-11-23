@@ -4,8 +4,11 @@
 //   POST /jobmail     { emails: [{id, from, subject, snippet, date}] } → { results }
 //   POST /ask         { question, today, records: [{id, module, title, fields}] } → { answer, sources }
 // Every request must carry the X-App-Token header matching the APP_TOKEN secret.
+//
+// One self-contained file with no dependencies, so it can be pasted straight into the
+// Cloudflare dashboard's code editor (no npm, no command line). It calls the Claude API over
+// HTTPS directly for that reason; the official SDK needs a build step the dashboard can't run.
 
-import Anthropic from '@anthropic-ai/sdk';
 
 const CLEANUP_SCHEMA = {
   type: 'object',
@@ -30,9 +33,37 @@ Also extract:
 - areas: which life areas the entry is about.
 - tasks: short actionable to-dos the person says they need to do, written in the same Hinglish style. Empty if none.`;
 
+// ── Claude API (Messages) over fetch ───────────────────────────────────
+// Returns { ok: true, data } with the parsed JSON answer, or { ok: false, reason }.
+async function claude(env, { system, content, schema, model }) {
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-api-key': env.ANTHROPIC_API_KEY,
+      'anthropic-version': '2026-10-21',
+      'anthropic-beta': 'server-side-fallback-2026-07-01',
+    },
+    body: JSON.stringify({
+      model: model || env.CLEANUP_MODEL || 'claude-opus-5-5',
+      max_tokens: 16000,
+      fallbacks: 'default', // if the model declines, the API retries on a fallback model in the same call
+      output_config: { effort: 'low', format: { type: 'json_schema', schema } },
+      system,
+      messages: [{ role: 'user', content }],
+    }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) return { ok: false, reason: `Claude API ${res.status}: ${body?.error?.message || 'error'}` };
+  if (body.stop_reason === 'refusal') return { ok: false, reason: 'refusal' };
+  if (body.stop_reason === 'max_tokens') return { ok: false, reason: 'max_tokens' };
+  const block = (body.content || []).find((b) => b.type === 'text');
+  try { return { ok: true, data: JSON.parse(block.text) }; } catch { return { ok: false, reason: 'Bad AI response' }; }
+}
+
 function cors(env) {
   return {
-    'Access-Control-Allow-Origin': env.ALLOWED_ORIGIN || '*',
+    'Access-Control-Allow-Origin': env.ALLOWED_ORIGIN || 'https://amanbhatt97.github.io',
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, X-App-Token',
     'Access-Control-Max-Age': '86400',
@@ -67,28 +98,10 @@ async function transcribe(request, env) {
 async function cleanup(request, env) {
   const { text } = await request.json();
   if (!text || typeof text !== 'string') return json(env, { error: 'Missing text' }, 400);
-  if (!env.ANTHROPIC_API_KEY) return json(env, { text, mood: null, people: [], areas: [], tasks: [] });
-
-  const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
-  const response = await client.beta.messages.create({
-    model: env.CLEANUP_MODEL || 'claude-opus-5-5',
-    max_tokens: 16000,
-    betas: ['server-side-fallback-2026-07-01'],
-    fallbacks: 'default',
-    output_config: { effort: 'low', format: { type: 'json_schema', schema: CLEANUP_SCHEMA } },
-    system: SYSTEM,
-    messages: [{ role: 'user', content: `<transcript>\n${text.slice(0, 50000)}\n</transcript>` }],
-  });
-
-  if (response.stop_reason === 'refusal' || response.stop_reason === 'max_tokens') {
-    return json(env, { text, mood: null, people: [], areas: [], tasks: [] });
-  }
-  const block = response.content.find((b) => b.type === 'text');
-  try {
-    return json(env, JSON.parse(block.text));
-  } catch {
-    return json(env, { text, mood: null, people: [], areas: [], tasks: [] });
-  }
+  const plain = { text, mood: null, people: [], areas: [], tasks: [] };
+  if (!env.ANTHROPIC_API_KEY) return json(env, plain);
+  const r = await claude(env, { system: SYSTEM, schema: CLEANUP_SCHEMA, content: `<transcript>\n${text.slice(0, 50000)}\n</transcript>` });
+  return json(env, r.ok ? r.data : plain);
 }
 
 const JOBMAIL_SCHEMA = {
@@ -126,26 +139,11 @@ async function jobmail(request, env) {
   const { emails } = await request.json();
   if (!Array.isArray(emails) || !emails.length) return json(env, { results: [] });
   if (!env.ANTHROPIC_API_KEY) return json(env, { error: 'AI not configured' }, 501);
-  const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
   const items = emails.slice(0, 25).map((e) => ({
     id: String(e.id), from: String(e.from || '').slice(0, 200), subject: String(e.subject || '').slice(0, 300), preview: String(e.snippet || '').slice(0, 400), date: String(e.date || ''),
   }));
-  const response = await client.beta.messages.create({
-    model: env.CLEANUP_MODEL || 'claude-opus-5-5',
-    max_tokens: 16000,
-    betas: ['server-side-fallback-2026-07-01'],
-    fallbacks: 'default',
-    output_config: { effort: 'low', format: { type: 'json_schema', schema: JOBMAIL_SCHEMA } },
-    system: JOBMAIL_SYSTEM,
-    messages: [{ role: 'user', content: `<emails>\n${JSON.stringify(items)}\n</emails>` }],
-  });
-  if (response.stop_reason === 'refusal' || response.stop_reason === 'max_tokens') return json(env, { error: 'AI could not read these' }, 502);
-  const block = response.content.find((b) => b.type === 'text');
-  try {
-    return json(env, JSON.parse(block.text));
-  } catch {
-    return json(env, { error: 'Bad AI response' }, 502);
-  }
+  const r = await claude(env, { system: JOBMAIL_SYSTEM, schema: JOBMAIL_SCHEMA, content: `<emails>\n${JSON.stringify(items)}\n</emails>` });
+  return r.ok ? json(env, r.data) : json(env, { error: r.reason === 'refusal' || r.reason === 'max_tokens' ? 'AI could not read these' : r.reason }, 502);
 }
 
 const ASK_SCHEMA = {
@@ -174,31 +172,19 @@ async function ask(request, env) {
   if (!env.ANTHROPIC_API_KEY) return json(env, { error: 'AI not configured' }, 501);
   const data = JSON.stringify(Array.isArray(records) ? records : []);
   if (data.length > 1_500_000) return json(env, { error: 'Too much data to send in one question' }, 413);
-  const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
-  const response = await client.beta.messages.create({
-    model: env.ASK_MODEL || env.CLEANUP_MODEL || 'claude-opus-5-5',
-    max_tokens: 16000,
-    betas: ['server-side-fallback-2026-07-01'],
-    fallbacks: 'default',
-    output_config: { effort: 'low', format: { type: 'json_schema', schema: ASK_SCHEMA } },
+  const r = await claude(env, {
+    model: env.ASK_MODEL || env.CLEANUP_MODEL,
     system: ASK_SYSTEM,
-    messages: [{
-      role: 'user',
-      content: [
-        // the record set is identical across questions asked in a row, so it is cached
-        { type: 'text', text: `<records>\n${data}\n</records>`, cache_control: { type: 'ephemeral' } },
-        { type: 'text', text: `Today is ${String(today || '').slice(0, 40)}.\n<question>\n${question.slice(0, 2000)}\n</question>` },
-      ],
-    }],
+    schema: ASK_SCHEMA,
+    content: [
+      // the record set is identical across questions asked in a row, so it is cached
+      { type: 'text', text: `<records>\n${data}\n</records>`, cache_control: { type: 'ephemeral' } },
+      { type: 'text', text: `Today is ${String(today || '').slice(0, 40)}.\n<question>\n${question.slice(0, 2000)}\n</question>` },
+    ],
   });
-  if (response.stop_reason === 'refusal') return json(env, { answer: 'I can’t answer that one.', sources: [] });
-  if (response.stop_reason === 'max_tokens') return json(env, { error: 'Answer was cut off' }, 502);
-  const block = response.content.find((b) => b.type === 'text');
-  try {
-    return json(env, JSON.parse(block.text));
-  } catch {
-    return json(env, { error: 'Bad AI response' }, 502);
-  }
+  if (r.ok) return json(env, r.data);
+  if (r.reason === 'refusal') return json(env, { answer: 'I can’t answer that one.', sources: [] });
+  return json(env, { error: r.reason === 'max_tokens' ? 'Answer was cut off' : r.reason }, 502);
 }
 
 export default {

@@ -37,23 +37,24 @@ Data is written to a separate `data` branch (`meta.json`, `records/<section>.jso
 
 ### 3. Voice transcription (optional)
 
-The app records and saves voice notes without this. To get text, deploy the Worker in `worker/`, which holds your API keys so they never sit in the browser:
+The app records and saves voice notes without this. To get text (and to use Ask), set up the Worker in `worker/`. It holds your API keys so they never sit in the browser. It is one file with no dependencies, so it can be set up entirely in the browser:
 
-```bash
-cd worker
-npm install
-npx wrangler login
-npx wrangler secret put APP_TOKEN          # any long random string
-npx wrangler secret put SARVAM_API_KEY     # from sarvam.ai
-npx wrangler secret put ANTHROPIC_API_KEY  # for Ask, Hinglish cleanup + suggested tasks, Gmail AI
-npx wrangler deploy
-```
+1. Sign in at [dash.cloudflare.com](https://dash.cloudflare.com) (free account).
+2. **Workers & Pages → Create → Create Worker**. Name it `life-voice` and press **Deploy** (it deploys a "Hello World" placeholder).
+3. Press **Edit code**. Delete everything in the editor, paste the whole of [`worker/src/index.js`](https://raw.githubusercontent.com/amanbhatt97/my-ai/main/worker/src/index.js), and press **Deploy**.
+4. Go back to the Worker → **Settings → Variables and Secrets → Add**. Add three, each with type **Secret**:
+   - `APP_TOKEN`: any long random password you make up
+   - `SARVAM_API_KEY`: from your Sarvam dashboard
+   - `ANTHROPIC_API_KEY`: from console.anthropic.com (needed for Ask, Hinglish cleanup and Gmail AI)
+5. Copy the Worker's address from its overview page (`https://life-voice.<your-subdomain>.workers.dev`).
+
+Prefer the command line? `cd worker && npx wrangler login && npx wrangler secret put APP_TOKEN` (and the other two), then `npx wrangler deploy`.
 
 Then, in the app, go to Settings → Voice & assistant and paste the Worker URL and the same `APP_TOKEN`.
 
 Before relying on it:
 - Check `SARVAM_URL`, `SARVAM_MODEL`, `SARVAM_MODE` and the response field in `worker/src/index.js` against Sarvam's current docs. They were written from Sarvam's published API description and not tested against the live API.
-- Set `ALLOWED_ORIGIN` in `worker/wrangler.toml` to your Pages origin.
+- If your app is served from a different address than https://amanbhatt97.github.io, add a plain variable `ALLOWED_ORIGIN` with that address.
 - Set spending limits on your Sarvam and Anthropic accounts.
 - Record a few real clips (work talk, family talk, names, a noisy place) and check the Hinglish quality.
 

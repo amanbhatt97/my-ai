@@ -1,7 +1,6 @@
 name = "life-voice"
 main = "src/index.js"
 compatibility_date = "2024-09-23"
-compatibility_flags = ["nodejs_compat"]
 
 [vars]
 # The address your app is served from, e.g. https://yourname.github.io
