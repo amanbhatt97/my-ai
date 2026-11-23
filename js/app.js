@@ -1401,10 +1401,13 @@ document.addEventListener('click', async (e) => {
       render();
       break;
     }
-    case 'task-done':
+    case 'task-done': {
+      const li = el.closest('li');
+      if (li && !matchMedia('(prefers-reduced-motion: reduce)').matches) { li.classList.add('completing'); await new Promise((r) => setTimeout(r, 320)); }
       await db.update(id, { status: 'done', completedOn: todayStr() });
       toast('Done', { undo: true });
       break;
+    }
     case 'habit': {
       const h = db.get(id);
       const log = { ...(h.data.log || {}) };
@@ -1678,8 +1681,22 @@ document.addEventListener('submit', async (e) => {
   }
 });
 
+// Laptop shortcuts: "/" find, "n" new, then g+t/l/p/s to jump between tabs.
+let gPressed = 0;
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && $('#sheet').classList.contains('open') && !recorder) closeSheet();
+  const typing = e.target.closest && e.target.closest('input, textarea, select, [contenteditable]');
+  if (typing || e.metaKey || e.ctrlKey || e.altKey || $('#sheet').classList.contains('open')) return;
+  if (e.key === '/') {
+    e.preventDefault();
+    const cap = document.querySelector('form.capture input') || $('#global-q');
+    if (cap) cap.focus(); else { go('#/search'); setTimeout(() => $('#global-q')?.focus(), 60); }
+  } else if (e.key === 'n') { e.preventDefault(); openQuickAdd(); }
+  else if (e.key === 'g') gPressed = Date.now();
+  else if (Date.now() - gPressed < 1200 && { t: 1, l: 1, p: 1, s: 1 }[e.key]) {
+    gPressed = 0;
+    go({ t: '#/now', l: '#/life', p: '#/plan', s: '#/search' }[e.key]);
+  }
 });
 
 // ── boot ────────────────────────────────────────────────────────────────
