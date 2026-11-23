@@ -292,6 +292,8 @@ function updateTopbar() {
   const h1 = document.querySelector('main .top h1');
   const title = h1 ? h1.textContent.trim().replace(/\\s+/g, ' ') : '';
   const back = currentBack;
+  // Home keeps its Ask bar pinned instead of a title bar
+  bar.hidden = currentRoute.name === 'now';
   bar.innerHTML = `${back ? `<a class="tb-back" href="${esc(back.href)}" aria-label="Back to ${esc(back.name)}">${icon('back', 18)}</a>` : '<span class="tb-back"></span>'}<span class="tb-title">${esc(currentRoute.name === 'now' ? 'Home' : title)}</span><span class="tb-back"></span>`;
 }
 matchMedia('(min-width: 1000px)').addEventListener('change', () => render());
@@ -451,6 +453,40 @@ function emptyState(text, href, cta) {
 }
 
 // ── NOW ─────────────────────────────────────────────────────────────────
+// ── area cards on Home: open in place (no page change), like the tracks in Notes ──
+const lsGet = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* private mode */ } };
+const SHORT = { 'Job applications': 'Jobs', 'Investments & accounts': 'Investments', 'Loans & EMIs': 'Loans', 'Documents & IDs': 'Documents', 'Courses & certificates': 'Courses', 'Portfolio & profiles': 'Profiles', 'Visas & travel IDs': 'Visas' };
+function areaBody(room) {
+  const total = room.modules.reduce((n, m) => n + db.list(m).length, 0)
+    + (room.id === 'health' ? db.list('days').filter((d) => d.data.mood).length + db.list('habits').length : 0);
+  const main = room.modules.find((m) => m !== 'journal' && m !== 'links') || room.modules[0];
+  const body = total ? roomDashboard(room) : `<p class="muted area-empty">${esc(HINTS[main] || `Nothing in ${room.name} yet.`)}</p>`;
+  // what's inside, like the topic list under a Notes track: tap to open that list
+  const contents = room.modules.map((m) => {
+    const n = db.list(m).length;
+    return `<a class="ac-row" href="${collectionHref(m)}"><span>${esc(MODULE[m].name)}</span><span class="ac-n ${n ? '' : 'zero'}">${n}</span>${icon('chev', 14)}</a>`;
+  }).join('');
+  return `${body}<div class="area-contents">${contents}</div><div class="area-foot"><button type="button" class="btn small" data-action="room-add" data-m="${main}">${icon('plus', 15)} Add</button><a class="link" href="#/room/${room.id}">Full page ›</a></div>`;
+}
+function areaCard(room, i, open) {
+  const rems = roomReminders(room);
+  const late = rems.filter((x) => x.days < 0).length;
+  const soon = rems.filter((x) => x.days >= 0 && x.days <= 7).length;
+  const tag = late ? `<span class="area-tag late">${late} late</span>` : soon ? `<span class="area-tag soon">${soon} this week</span>` : '';
+  const contents = room.modules.filter((m) => m !== 'links').map((m) => SHORT[MODULE[m].name] || MODULE[m].name).slice(0, 4).join(' · ');
+  const [fact] = roomFact(room);
+  return `<div class="area ${open ? 'open' : ''}" data-room="${room.id}" style="--c:${room.color}">
+    <button type="button" class="area-head" data-action="area-toggle" data-room="${room.id}" aria-expanded="${open}">
+      <span class="area-num">${String(i + 1).padStart(2, '0')}</span>
+      <span class="area-ico">${icon(room.icon || 'life', 18)}</span>
+      <span class="area-main"><span class="area-title">${esc(room.name)}${tag}</span><span class="area-sub">${esc(contents)}</span><span class="area-fact ${late ? 'alert' : ''}">${esc(fact)}</span></span>
+      <span class="area-chev">${icon('chev', 16)}</span>
+    </button>
+    <div class="area-body dash" style="--c:${room.color}">${open ? areaBody(room) : ''}</div>
+  </div>`;
+}
+
 async function viewNow() {
   const t = todayStr();
   const now = new Date();
@@ -504,16 +540,7 @@ async function viewNow() {
     items.push({ o: 2, k: e.start, html: `<li><span class="when strong">${esc(time)}</span><span class="dot" style="--c:#FF3B30"></span><a class="what" href="${esc(e.link || '#')}" target="_blank" rel="noopener"><span>${esc(e.title)}</span></a></li>` });
   }
   items.sort((a, b) => a.o - b.o || String(a.k || '').localeCompare(String(b.k || '')));
-  const roomTile = (room) => {
-    const late = roomReminders(room).filter((x) => x.days < 0).length;
-    const [f1] = roomFact(room);
-    const urgent = roomReminders(room).find((x) => x.days <= 14);
-    return `<a class="tile" href="#/room/${room.id}" style="--c:${room.color}">
-      <span class="tile-head"><span class="tile-ico">${icon(room.icon || 'life', 16)}</span>${late ? `<span class="tile-badge">${late}</span>` : ''}</span>
-      <span class="tile-big" style="font-size:19px">${esc(room.name)}</span>
-      <span class="tile-fact ${urgent && urgent.days < 0 ? 'alert' : ''}">${esc(f1)}</span>
-    </a>`;
-  };
+  const openAreas = new Set(lsGet('openAreas', []));
   const calCard = await calendarCard(cal, t);
   const googleLink = setUp && !autosync.connected() ? '<button type="button" class="link" data-action="google-connect">Connect Google</button>' : '';
   return `<header class="top home-top">
@@ -544,8 +571,8 @@ async function viewNow() {
   ${calCard}
 
   <section class="block" aria-label="Areas">
-    <span class="label">Everything you track</span>
-    <div class="bento">${ROOMS.map(roomTile).join('')}</div>
+    <div class="label-row"><span class="label">Everything you track</span><span class="small muted">Tap to open</span></div>
+    <div class="areas">${ROOMS.map((room, i) => areaCard(room, i, openAreas.has(room.id))).join('')}</div>
   </section>
 
   <nav class="home-links" aria-label="More">
@@ -2027,6 +2054,18 @@ document.addEventListener('click', async (e) => {
       break;
     }
     case 'ask-brief': openAsk(BRIEF_Q); break;
+    case 'area-toggle': {
+      const card = el.closest('.area');
+      const id = el.dataset.room;
+      const open = !card.classList.contains('open');
+      const set = new Set(lsGet('openAreas', []));
+      if (open) { set.add(id); const b = card.querySelector('.area-body'); if (!b.innerHTML.trim()) b.innerHTML = areaBody(ROOM[id]); } else set.delete(id);
+      lsSet('openAreas', [...set]);
+      card.classList.toggle('open', open);
+      el.setAttribute('aria-expanded', String(open));
+      if (open) setTimeout(() => { const r = card.getBoundingClientRect(); if (r.top < 70 || r.top > innerHeight * 0.6) window.scrollBy({ top: r.top - 76, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }); }, 30);
+      break;
+    }
     case 'capture-ask': {
       const inp = document.querySelector('form.capture input');
       if (inp && inp.value.trim()) openAsk(inp.value.trim());

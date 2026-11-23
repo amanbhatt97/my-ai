@@ -696,3 +696,48 @@ body { padding-bottom: calc(env(safe-area-inset-bottom) + 32px); }
 .sheet-card form.ask-form { flex-direction: row; gap: 8px; }
 .sheet-card form.ask-form input { text-align: left; padding: 0; }
 .sheet-card form.ask-form .icon-btn { width: 40px; height: 40px; flex-shrink: 0; }
+
+/* v6 · area cards that open in place (pattern from the Notes tracks) */
+.areas { display: flex; flex-direction: column; gap: 10px; margin-bottom: 26px; }
+.area { background: var(--surface); border-radius: 18px; box-shadow: var(--tile-shadow); overflow: hidden; border: 1px solid transparent; transition: border-color 0.2s; }
+.area.open { border-color: color-mix(in srgb, var(--c) 35%, transparent); }
+.area-head { display: flex; align-items: center; gap: 12px; width: 100%; padding: 14px 14px 14px 12px; border: 0; background: none; text-align: left; cursor: pointer; color: var(--text); font: inherit; }
+.area-num { width: 34px; height: 34px; flex-shrink: 0; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; font: 600 12px var(--mono); color: var(--c); background: color-mix(in srgb, var(--c) 12%, transparent); font-variant-numeric: tabular-nums; }
+.area-ico { display: inline-flex; color: var(--c); flex-shrink: 0; }
+.area-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.area-title { display: flex; align-items: center; gap: 8px; font: 600 16px/1.25 var(--display); letter-spacing: -0.01em; }
+.area-tag { font: 600 10.5px/1 var(--font); text-transform: uppercase; letter-spacing: 0.06em; padding: 4px 7px; border-radius: 6px; background: var(--surface-2); color: var(--muted); }
+.area-tag.late { background: var(--danger-bg); color: var(--danger); }
+.area-tag.soon { background: var(--warn-bg); color: var(--warn); }
+.area-sub { font-size: 12.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.area-fact { font-size: 13px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.area-fact.alert { color: var(--danger); }
+.area-chev { color: var(--muted); display: inline-flex; transition: transform 0.2s ease; transform: rotate(90deg); }
+.area.open .area-chev { transform: rotate(-90deg); }
+.area-body { display: none; padding: 4px 14px 14px; border-top: 1px solid var(--line); }
+.area.open .area-body { display: block; animation: areaIn 0.18s ease-out; }
+@keyframes areaIn { from { opacity: 0; transform: translateY(-4px); } }
+@media (prefers-reduced-motion: reduce) { .area.open .area-body { animation: none; } .area-chev { transition: none; } }
+.area-body .bignums { margin: 12px 0 14px; }
+.area-body .vcard { background: var(--bg); box-shadow: none; margin-bottom: 10px; }
+.area-empty { margin: 14px 0; font-size: 14px; }
+.area-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 6px; }
+.area-foot .btn { gap: 6px; }
+
+/* the Ask bar stays at the top while you scroll Home (like the Notes search bar) */
+form.capture { position: sticky; top: calc(env(safe-area-inset-top) + 8px); z-index: 6; box-shadow: 0 0 0 8px var(--bg); }
+
+@media (min-width: 1000px) {
+  .areas { display: grid; grid-template-columns: 1fr 1fr; align-items: start; }
+  .area.open { grid-column: span 2; }
+  .area.open .area-body { columns: 2; column-gap: 16px; }
+  .area.open .area-body > * { break-inside: avoid; }
+  .area.open .area-body > .bignums, .area.open .area-body > .area-foot { column-span: all; }
+}
+#topbar[hidden] { display: none; }
+.area-contents { display: flex; flex-direction: column; margin: 4px 0 8px; border-top: 1px solid var(--line); break-inside: avoid; column-span: all; }
+.ac-row { display: flex; align-items: center; gap: 10px; min-height: 44px; border-bottom: 1px solid var(--line); color: var(--text); font-size: 15px; }
+.ac-row > span:first-child { flex: 1; min-width: 0; }
+.ac-n { font: 500 13px var(--mono); color: var(--text-2); font-variant-numeric: tabular-nums; }
+.ac-n.zero { color: var(--muted); opacity: 0.6; }
+.ac-row svg { color: var(--muted); }
