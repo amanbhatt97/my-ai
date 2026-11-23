@@ -1,0 +1,13 @@
+{
+  "name": "Life",
+  "short_name": "Life",
+  "description": "Private life tracker",
+  "start_url": "./#/now",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#07080a",
+  "theme_color": "#07080a",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

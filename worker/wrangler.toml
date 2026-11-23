@@ -1,0 +1,19 @@
+name = "life-voice"
+main = "src/index.js"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+# The address your app is served from, e.g. https://yourname.github.io
+ALLOWED_ORIGIN = "https://amanbhatt97.github.io"
+# Sarvam settings. Check these against https://docs.sarvam.ai before deploying.
+SARVAM_URL = "https://api.sarvam.ai/speech-to-text"
+SARVAM_MODEL = "saaras:v3"
+SARVAM_MODE = "translit"
+# Model used to clean up transcripts. claude-haiku-5-5 is far cheaper if quality holds.
+CLEANUP_MODEL = "claude-opus-5-5"
+
+# Secrets (set with `npx wrangler secret put NAME`, never put them here):
+#   APP_TOKEN          any long random string; paste the same value into the app's Settings
+#   SARVAM_API_KEY     from your Sarvam dashboard
+#   ANTHROPIC_API_KEY  optional; without it, cleanup is skipped and raw text is returned
