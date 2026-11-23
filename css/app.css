@@ -358,7 +358,7 @@ main:focus, main:focus-visible { outline: none; }
 .nav {
   position: fixed; z-index: 10; left: 0; right: 0; bottom: 0;
   height: calc(var(--tab-h) + env(safe-area-inset-bottom)); padding: 8px 8px env(safe-area-inset-bottom);
-  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); align-items: start;
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: start;
   background: color-mix(in srgb, var(--bg) 88%, transparent); border-top: 1px solid var(--line);
   backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
 }
@@ -373,18 +373,11 @@ main:focus, main:focus-visible { outline: none; }
 .sync-dot[data-state="error"] { background: var(--danger); }
 .sync-dot[data-state="offline"] { background: var(--warn); }
 
-/* desktop: left rail instead of bottom tabs */
-.side { display: none; }
-@media (min-width: 1100px) {
-  body { padding-left: 260px; padding-bottom: 40px; }
-  .nav { display: none; }
-  .side { display: flex; flex-direction: column; gap: 2px; position: fixed; top: 0; bottom: 0; left: 0; width: 240px; padding: 28px 14px; border-right: 1px solid var(--line); overflow-y: auto; }
-  .side a { display: flex; align-items: center; gap: 12px; min-height: 40px; padding: 0 12px; border-radius: 10px; color: var(--text-2); font-size: 14px; }
-  .side a.on { background: var(--surface); color: var(--text); font-weight: 600; }
-  .side .side-h { font-size: 12px; font-weight: 600; color: var(--muted); padding: 18px 12px 6px; }
-  .side .brand { font: 600 20px var(--display); color: var(--text); margin-bottom: 14px; }
-  .action-bar { bottom: 8px; }
-  .toast { bottom: 24px; }
+/* laptop: same layout, wider page, tab bar as a centred pill */
+@media (min-width: 900px) {
+  main { max-width: 960px; }
+  .nav { left: 50%; right: auto; transform: translateX(-50%); bottom: 16px; width: 420px; height: 64px; padding: 8px; border: 1px solid var(--line-2); border-radius: 20px; }
+  .rooms { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
 
 /* ── sheet & toast ────────────────────────────────────────────────────── */
@@ -445,3 +438,9 @@ button.cd:hover { border-color: var(--text-2); }
 .jt-body a { color: var(--text); text-decoration: underline; text-decoration-color: var(--line-2); text-underline-offset: 3px; }
 .merge-list { max-height: 48vh; overflow-y: auto; }
 .merge-list .row { width: 100%; border: 0; border-bottom: 1px solid var(--line); background: none; text-align: left; cursor: pointer; }
+
+/* home */
+.home-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 2px; }
+.home-row .kicker { margin: 0; }
+.section-title { margin: 8px 0 14px; font: 600 24px/1.2 var(--display); letter-spacing: -0.01em; }
+#life { scroll-margin-top: 16px; }

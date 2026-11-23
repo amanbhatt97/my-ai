@@ -48,7 +48,7 @@ const I = {
   journal: '<path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z"/><path d="M5 17a3 3 0 0 1 3-3h11"/>',
   life: '<rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/>',
   search: '<circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/>',
-  gear: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/>',
+  gear: '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
   back: '<path d="M15 5l-7 7 7 7"/>',
   check: '<path d="M5 12l5 5 9-10"/>',
   chart: '<path d="M5 20V10M12 20V4M19 20v-7"/>',
@@ -215,12 +215,12 @@ function moduleOfRoute({ name, parts }) {
   return '';
 }
 function tabFor(route) {
-  if (route.name === 'now') return 'today';
+  if (route.name === 'now' || route.name === 'life') return 'today';
   if (route.name === 'search') return 'search';
   if (route.name === 'plan' || route.name === 'progress' || route.name === 'review') return 'plan';
   const mid = moduleOfRoute(route);
   if (mid && PLAN_MODULES.includes(mid)) return 'plan';
-  return 'life';
+  return 'today';
 }
 function backFor(route) {
   const { name, parts } = route;
@@ -230,15 +230,15 @@ function backFor(route) {
   if (name === 'new') return special(mid) || { name: MODULE[mid]?.name || 'Back', href: `#/m/${mid}` };
   if (name === 'r') {
     const r = db.get(parts[0]);
-    if (!r) return { name: 'Life', href: '#/life' };
+    if (!r) return { name: 'Home', href: '#/now' };
     if (parts[1]) return { name: 'Overview', href: `#/r/${r.id}` };
     return special(r.module) || { name: MODULE[r.module].name, href: `#/m/${r.module}` };
   }
-  if (name === 'room') return { name: 'Life', href: '#/life' };
+  if (name === 'room') return { name: 'Home', href: '#/now' };
   if (name === 'journal' || name === 'links') return { name: 'Me', href: '#/room/me' };
   if (name === 'inbox') return { name: 'Career', href: '#/room/career' };
   if (name === 'progress' || name === 'review') return { name: 'Plan', href: '#/plan' };
-  if (['settings', 'setup', 'trash'].includes(name)) return { name: 'Life', href: '#/life' };
+  if (['settings', 'setup', 'trash'].includes(name)) return { name: 'Home', href: '#/now' };
   return null;
 }
 
@@ -365,8 +365,8 @@ async function viewNow() {
   else if (nudge) hint = `<div class="hint-card"><span class="dot"></span><span class="t"><b>${esc(nudge.text)}</b></span>${nudge.href ? `<a class="btn small" href="${esc(nudge.href)}">${esc(nudge.cta)}</a>` : `<button type="button" class="btn small" data-action="${nudge.action}"${nudge.id ? ` data-id="${nudge.id}"` : ''}>${esc(nudge.cta)}</button>`}<button type="button" class="icon-btn sm" data-action="nudge-dismiss" data-key="${esc(nudge.key)}" aria-label="Hide for today">×</button></div>`;
 
   const habitsDone = habits.filter((h) => (h.data.log || {})[t]).length;
-  return `<header class="top">
-    <div class="kicker">${esc(now.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' }))}</div>
+  return `<header class="top home-top">
+    <div class="home-row"><div class="kicker">${esc(now.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' }))}</div><a class="icon-btn" href="#/settings" aria-label="Settings">${icon('gear', 20)}</a></div>
     <h1>${headline}</h1>
   </header>
   <form class="capture" data-form="capture" role="search">
@@ -394,7 +394,8 @@ async function viewNow() {
       </section>
       ${coming.length ? `<section class="block" aria-label="Coming up"><span class="label">Coming up</span><ul class="simple">${coming.map((c) => c.html).join('')}</ul></section>` : ''}
     </div>
-  </div>`;
+  </div>
+  ${lifeHtml()}`;
 }
 
 // ── suggestions: small nudges based on what's in the app ───────────────
@@ -825,24 +826,36 @@ function roomFact(room) {
   return [`${v1} ${word}`, second];
 }
 
-async function viewLife() {
+function lifeHtml() {
   const recent = db.all().filter((r) => MODULE[r.module]).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 5);
   const ago = (iso) => { const m = (Date.now() - Date.parse(iso)) / 6e4; return m < 60 ? `${Math.max(1, Math.round(m))}m` : m < 1440 ? `${Math.round(m / 60)}h` : m < 2880 ? 'Yesterday' : fmtDay(iso.slice(0, 10)); };
-  return `${header('Life', { kicker: 'Everything you keep track of', actions: `<a class="icon-btn" href="#/settings" aria-label="Settings">${icon('gear', 18)}</a>` })}
-  <div class="rooms">${ROOMS.map((room) => {
-    const late = roomReminders(room).filter((x) => x.days < 0).length;
-    const [f1, f2] = roomFact(room);
-    return `<a class="room-card ${late ? 'alert' : ''}" href="#/room/${room.id}" style="--c:${room.color}">
-      <span class="rc-top"><span class="rc-name">${esc(room.name)}</span>${late ? `<span class="badge">${late}</span>` : `<span class="dot" style="--c:${room.color}"></span>`}</span>
-      <span class="rc-fact">${esc(f1)}<span>${esc(f2)}</span></span>
-    </a>`;
-  }).join('')}</div>
-  ${recent.length ? `<section class="block"><span class="label">Recently changed</span><ul class="simple">${recent.map((r) => `<li><a href="#/r/${r.id}"><span class="l"><span class="dot" style="--c:${colorOf(r.module)}"></span><span>${esc(r.module === 'journal' ? 'Journal entry' : titleOf(r))}</span></span><span class="r">${ago(r.updatedAt)}</span></a></li>`).join('')}</ul></section>` : ''}
-  <section class="block"><span class="label">More</span><ul class="simple">
-    <li><a href="#/setup"><span class="l"><span>Set up guide</span></span><span class="r">${SETUP.filter(setupDone).length}/${SETUP.length}</span></a></li>
-    <li><a href="#/settings"><span class="l"><span>Settings</span></span><span class="r">›</span></a></li>
-    <li><a href="#/trash"><span class="l"><span>Trash</span></span><span class="r">${db.trash().length}</span></a></li>
-  </ul></section>`;
+  return `<section class="block" id="life" aria-label="Life">
+    <h2 class="section-title">Life</h2>
+    <div class="rooms">${ROOMS.map((room) => {
+      const late = roomReminders(room).filter((x) => x.days < 0).length;
+      const [f1, f2] = roomFact(room);
+      return `<a class="room-card ${late ? 'alert' : ''}" href="#/room/${room.id}" style="--c:${room.color}">
+        <span class="rc-top"><span class="rc-name">${esc(room.name)}</span>${late ? `<span class="badge">${late}</span>` : `<span class="dot" style="--c:${room.color}"></span>`}</span>
+        <span class="rc-fact">${esc(f1)}<span>${esc(f2)}</span></span>
+      </a>`;
+    }).join('')}</div>
+  </section>
+  <div class="grid-2">
+    ${recent.length ? `<section class="block"><span class="label">Recently changed</span><ul class="simple">${recent.map((r) => `<li><a href="#/r/${r.id}"><span class="l"><span class="dot" style="--c:${colorOf(r.module)}"></span><span>${esc(r.module === 'journal' ? 'Journal entry' : titleOf(r))}</span></span><span class="r">${ago(r.updatedAt)}</span></a></li>`).join('')}</ul></section>` : '<div></div>'}
+    <section class="block"><span class="label">More</span><ul class="simple">
+      <li><a href="#/setup"><span class="l"><span>Set up guide</span></span><span class="r">${SETUP.filter(setupDone).length}/${SETUP.length}</span></a></li>
+      <li><a href="#/progress"><span class="l"><span>Progress & streaks</span></span><span class="r">›</span></a></li>
+      <li><a href="#/settings"><span class="l"><span>Settings</span></span><span class="r">›</span></a></li>
+      <li><a href="#/trash"><span class="l"><span>Trash</span></span><span class="r">${db.trash().length}</span></a></li>
+    </ul></section>
+  </div>`;
+}
+
+async function viewLife() {
+  // Life lives on the home screen now: show it there, scrolled to the rooms
+  const html = await viewNow();
+  setTimeout(() => document.getElementById('life')?.scrollIntoView({ block: 'start' }), 30);
+  return html;
 }
 
 function collectionHref(m) {
@@ -854,7 +867,7 @@ async function viewRoom(id) {
   if (!room) return emptyState('Unknown room.', '#/life', 'Back to Life');
   const attn = roomReminders(room).filter((x) => x.days <= Math.max(x.r ? 30 : 0, 30)).slice(0, 4);
   return `<div class="room-head" style="--c:${room.color}">
-    ${header(room.name, { back: { name: 'Life', href: '#/life' } })}
+    ${header(room.name, { back: { name: 'Home', href: '#/now' } })}
     <div class="kpis">${roomKpis(room).map(([k, v]) => `<div class="kpi"><span>${esc(k)}</span><b>${esc(String(v))}</b></div>`).join('')}</div>
   </div>
   ${attn.length ? `<section class="block"><span class="label">Needs attention</span><div class="attn">${attn.map((x) => {
@@ -868,22 +881,7 @@ async function viewRoom(id) {
   </ul></section>`;
 }
 
-function renderSide() {
-  const side = $('#side');
-  if (!side) return;
-  const curRoom = currentRoute.name === 'room' ? currentRoute.parts[0] : roomOf(moduleOfRoute(currentRoute))?.id;
-  side.innerHTML = `<a class="brand" href="#/now">Life</a>
-    <a href="#/now" data-nav="today">${icon('now', 18)}Today</a>
-    <a href="#/life" data-nav="life">${icon('life', 18)}Life</a>
-    <a href="#/plan" data-nav="plan">${icon('plan', 18)}Plan</a>
-    <a href="#/search" data-nav="search">${icon('search', 18)}Search</a>
-    <div class="side-h">Rooms</div>
-    ${ROOMS.map((r) => `<a href="#/room/${r.id}" class="${curRoom === r.id ? 'on' : ''}"><span class="dot" style="--c:${r.color}"></span>${esc(r.name)}</a>`).join('')}
-    <div class="side-h">More</div>
-    <a href="#/settings">${icon('gear', 18)}Settings</a>`;
-  const top = tabFor(currentRoute);
-  for (const a of side.querySelectorAll('a[data-nav]')) a.classList.toggle('on', a.dataset.nav === top && !curRoom);
-}
+function renderSide() { /* no sidebar: one layout everywhere */ }
 
 // ── MODULE LIST ─────────────────────────────────────────────────────────
 function sortRecords(m, list) {
