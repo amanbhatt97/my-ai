@@ -178,7 +178,7 @@ const go = (hash) => { location.hash = hash; };
 const VIEWS = {
   now: viewNow, plan: viewPlan, journal: viewJournal, life: viewLife,
   m: viewModule, new: viewNew, r: viewRecord, search: viewSearch, settings: viewSettings, trash: viewTrash,
-  links: viewLinks, setup: viewSetup, progress: viewProgress, inbox: viewInbox, t: viewLife, room: viewRoom,
+  links: viewLinks, setup: viewSetup, progress: viewProgress, inbox: viewInbox, t: viewLife, room: viewRoom, review: viewReview,
 };
 
 async function render() {
@@ -217,7 +217,7 @@ function moduleOfRoute({ name, parts }) {
 function tabFor(route) {
   if (route.name === 'now') return 'today';
   if (route.name === 'search') return 'search';
-  if (route.name === 'plan' || route.name === 'progress') return 'plan';
+  if (route.name === 'plan' || route.name === 'progress' || route.name === 'review') return 'plan';
   const mid = moduleOfRoute(route);
   if (mid && PLAN_MODULES.includes(mid)) return 'plan';
   return 'life';
@@ -237,7 +237,7 @@ function backFor(route) {
   if (name === 'room') return { name: 'Life', href: '#/life' };
   if (name === 'journal' || name === 'links') return { name: 'Me', href: '#/room/me' };
   if (name === 'inbox') return { name: 'Career', href: '#/room/career' };
-  if (name === 'progress') return { name: 'Plan', href: '#/plan' };
+  if (name === 'progress' || name === 'review') return { name: 'Plan', href: '#/plan' };
   if (['settings', 'setup', 'trash'].includes(name)) return { name: 'Life', href: '#/life' };
   return null;
 }
@@ -409,7 +409,7 @@ async function nudges() {
   const reviews = db.list('reviews').map((r) => r.data);
   const lastWeekly = reviews.filter((r) => r.period === 'week').map((r) => r.date).sort().pop();
   if ((now.getDay() === 0 || now.getDay() === 6 || ago(lastWeekly) >= 10) && ago(lastWeekly) >= 6) {
-    out.push({ key: 'review', text: lastWeekly ? `Weekly review: last one was ${ago(lastWeekly)} days ago.` : 'Do your first weekly review. 15 minutes.', href: '#/new/reviews?period=week', cta: 'Start' });
+    out.push({ key: 'review', text: lastWeekly ? `Weekly review: last one was ${ago(lastWeekly)} days ago.` : 'Do your first weekly review. 10 minutes.', href: '#/review', cta: 'Start' });
   }
   if (now.getDate() <= 3) {
     const month = t.slice(0, 7);
@@ -652,6 +652,48 @@ async function viewInbox() {
   </form>`).join('') : `<div class="empty"><p>No suggestions waiting.</p></div>`}`;
 }
 
+// ── GUIDED WEEKLY REVIEW ────────────────────────────────────────────────
+async function viewReview() {
+  const t0 = startOfToday();
+  const start = new Date(t0); start.setDate(start.getDate() - 6);
+  const days7 = lastNDays(7);
+  const inWeek = (s) => s && parseDay(s) >= start;
+  const doneTasks = db.list('tasks').filter((r) => inWeek(completedDay(r)));
+  const habits = db.list('habits').filter((h) => h.data.active !== false);
+  const moods = days7.map((d) => db.list('days').find((r) => r.data.date === dayKey(d))?.data.mood).filter(Boolean);
+  const avgMood = moods.length ? (moods.reduce((a, b) => a + Number(b), 0) / moods.length).toFixed(1) : '–';
+  const entries = db.list('journal').filter((r) => inWeek((r.data.at || '').slice(0, 10))).length;
+  const hist = (await db.allHistory()).filter((h) => h.module === 'jobs' && Date.parse(h.at) >= start.getTime());
+  const jobsTouched = new Set(hist.map((h) => h.recordId)).size;
+  const weekGoals = db.list('goals').filter((g) => g.data.horizon === 'week' && g.data.status !== 'dropped');
+  const overdue = db.list('tasks').filter((r) => r.data.status !== 'done' && r.data.due && r.data.due < todayStr()).length;
+
+  return `${header('Weekly review', { kicker: `${fmtDay(dayKey(start))} – ${fmtDay(dayKey(t0))}` })}
+  <p class="lead">Ten minutes. Look at what happened, then answer four questions. It's saved under Plan → Reviews.</p>
+  <div class="stats">
+    <div class="stat"><span class="stat-v">${doneTasks.length}</span><span class="mono">tasks done</span></div>
+    <div class="stat"><span class="stat-v">${overdue}</span><span class="mono">tasks overdue</span></div>
+    <div class="stat"><span class="stat-v">${avgMood}</span><span class="mono">average mood</span></div>
+    <div class="stat"><span class="stat-v">${entries}</span><span class="mono">journal entries</span></div>
+    <div class="stat"><span class="stat-v">${jobsTouched}</span><span class="mono">applications moved</span></div>
+    <div class="stat"><span class="stat-v">${weekGoals.length ? Math.round(weekGoals.reduce((a, g) => a + (Number(g.data.progress) || 0), 0) / weekGoals.length) + '%' : '–'}</span><span class="mono">weekly goals</span></div>
+  </div>
+  ${habits.length ? `<section class="block"><span class="label">Habits this week</span><ul class="simple">${habits.map((h) => {
+    const n = days7.filter((d) => (h.data.log || {})[dayKey(d)]).length;
+    const target = Math.min(7, Number(h.data.perWeek) || 7);
+    return `<li><div><span class="l"><span class="dot" style="--c:${n >= target ? 'var(--accent)' : 'var(--warn)'}"></span><span>${esc(h.data.name)}</span></span><span class="r">${n}/${target}</span></div></li>`;
+  }).join('')}</ul></section>` : ''}
+  ${doneTasks.length ? `<section class="block"><span class="label">You finished</span><ul class="simple">${doneTasks.slice(0, 6).map((r) => `<li><a href="#/r/${r.id}"><span class="l"><span class="dot"></span><span>${esc(titleOf(r))}</span></span><span class="r">${fmtDay(completedDay(r))}</span></a></li>`).join('')}</ul></section>` : ''}
+  <form class="form" data-form="review">
+    <div class="field"><label for="rv-well">What went well?</label><textarea id="rv-well" name="wentWell" rows="3"></textarea></div>
+    <div class="field"><label for="rv-didnt">What didn't, and why?</label><textarea id="rv-didnt" name="didnt" rows="3"></textarea></div>
+    <div class="field"><label for="rv-learned">What did you learn?</label><textarea id="rv-learned" name="learned" rows="2"></textarea></div>
+    <div class="field"><label for="rv-next">Top 3 for next week (one per line, they become weekly goals)</label><textarea id="rv-next" name="next" rows="3"></textarea></div>
+    <fieldset class="field"><legend>Rate the week</legend><div class="mood">${[1, 2, 3, 4, 5].map((n) => `<label class="rate"><input type="radio" name="score" value="${n}"><span>${n}</span></label>`).join('')}</div></fieldset>
+    <div class="form-actions"><button class="btn primary wide" type="submit">Save review</button></div>
+  </form>`;
+}
+
 // ── SETUP GUIDE ─────────────────────────────────────────────────────────
 async function viewSetup() {
   const done = SETUP.filter(setupDone).length;
@@ -702,7 +744,7 @@ async function viewPlan(horizon = 'year') {
     <section class="block">
       <span class="label">Review</span>
       <p class="muted small">${lastReview ? `Last: ${esc(lastReview.data.period)} review, ${fmtDay(lastReview.data.date)}` : 'No reviews yet. 15 minutes every Sunday is the habit that makes all of this work.'}</p>
-      <a class="btn primary wide" href="#/new/reviews">Start a review</a>
+      <a class="btn primary wide" href="#/review">Start weekly review</a>
     </section>
     <section class="block">
       <span class="label">Decisions</span>
@@ -1622,6 +1664,16 @@ document.addEventListener('submit', async (e) => {
       // "?something" or a match in your data → search; otherwise add it
       if (q.startsWith('?')) { location.hash = '#/search'; setTimeout(() => { const i = $('#global-q'); if (i) { i.value = q.slice(1).trim(); i.dispatchEvent(new Event('input', { bubbles: true })); } }, 60); return; }
       openQuickAdd('tasks', q);
+    } else if (kind === 'review') {
+      const fd = new FormData(form);
+      const next = String(fd.get('next') || '').split('\n').map((x) => x.replace(/^[-*\d.\s]+/, '').trim()).filter(Boolean).slice(0, 5);
+      const rec = await db.create('reviews', {
+        period: 'week', date: todayStr(), score: fd.get('score') ? Number(fd.get('score')) : '',
+        wentWell: String(fd.get('wentWell') || ''), didnt: String(fd.get('didnt') || ''), learned: String(fd.get('learned') || ''), next: next.join('\n'),
+      });
+      for (const g of next) await db.create('goals', { title: g, horizon: 'week', status: 'active', progress: 0 });
+      toast(next.length ? `Review saved · ${plural(next.length, 'weekly goal')} set` : 'Review saved', { undo: false });
+      location.hash = `#/r/${rec.id}`;
     } else if (kind === 'renew') {
       const v = form.elements.date.value;
       if (!v) return;
@@ -1704,7 +1756,7 @@ let renderQueued = false;
 function queueRender(info) {
   // don't wipe a form the user is typing in
   if (formDirty) return;
-  if (['settings', 'new', 'search', 'inbox'].includes(currentRoute.name)) return;
+  if (['settings', 'new', 'search', 'inbox', 'review'].includes(currentRoute.name)) return;
   if (currentRoute.name === 'r' && info?.rec && info.rec.id !== currentRoute.parts[0]) return;
   if (renderQueued) return;
   renderQueued = true;
