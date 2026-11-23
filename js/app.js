@@ -2,6 +2,8 @@ import * as db from './db.js';
 import * as sync from './sync.js';
 import { Recorder, saveRecording, transcribe, retryPending, localStamp } from './journal.js';
 import * as gmail from './gmail.js';
+import * as gcal from './gcal.js';
+import * as google from './google.js';
 import { MODULES, MODULE, GROUPS, LINK_CATEGORIES, titleOf, defaults, isDone } from './schemas.js';
 
 // ── tiny helpers ────────────────────────────────────────────────────────
@@ -230,6 +232,9 @@ async function viewNow() {
   const heads = reminders().filter((x) => x.r.module !== 'tasks').slice(0, 8);
   const lastEntry = db.list('journal').sort((a, b) => (b.data.at || '').localeCompare(a.data.at || ''))[0];
   const mailCount = (await gmail.suggestions()).length;
+  const cal = await gcal.cachedEvents();
+  const calPending = (await gcal.pending()).length;
+  const calSetUp = !!(await google.clientId());
   const weekGoals = db.list('goals').filter((r) => r.data.horizon === 'week' && r.data.status !== 'dropped');
   const doneToday = db.list('tasks').filter((r) => r.data.completedOn === t).length;
   const taskTotal = tasks.length + doneToday;
@@ -281,6 +286,12 @@ async function viewNow() {
     </section>
 
     <section class="block">
+      <div class="label-row"><span class="label">Calendar</span>${calSetUp ? `<button type="button" class="link" data-action="gcal-refresh">${cal.at ? 'Refresh' : 'Connect'}</button>` : '<a class="link" href="#/settings">Set up</a>'}</div>
+      ${calendarHtml(cal)}
+      ${calPending ? `<p class="small muted">${calPending} item${calPending === 1 ? '' : 's'} waiting to be added to Google Calendar. <button type="button" class="link" data-action="gcal-refresh">Send now</button></p>` : ''}
+    </section>
+
+    <section class="block">
       <div class="label-row"><span class="label">Heads up</span></div>
       ${heads.length ? `<ul class="heads">${heads.map((x) => `<li><a href="#/r/${x.r.id}">
           <span>${esc(titleOf(x.r))} <span class="muted">· ${esc(x.label)}</span></span>
@@ -308,6 +319,22 @@ async function viewNow() {
       <button type="button" class="btn primary wide" data-action="record">${icon('mic', 18)} Speak about your day</button>
     </section>
   </div>`;
+}
+
+function calendarHtml(cal) {
+  if (!cal.at) return '<p class="muted">Your Google Calendar events will show here.</p>';
+  const t = todayStr();
+  const upcoming = cal.events.filter((e) => (e.start || '').slice(0, 10) >= t).slice(0, 6);
+  if (!upcoming.length) return '<p class="muted">Nothing on your calendar for the next two weeks.</p>';
+  let lastDay = '';
+  return `<ul class="cal">${upcoming.map((e) => {
+    const day = e.start.slice(0, 10);
+    const dayLabel = day === t ? 'Today' : diffDays(parseDay(day), startOfToday()) === 1 ? 'Tomorrow' : fmtDay(day);
+    const head = day !== lastDay ? `<li class="cal-day mono">${esc(dayLabel)}</li>` : '';
+    lastDay = day;
+    const time = e.allDay ? 'all day' : new Date(e.start).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false });
+    return `${head}<li><a href="${esc(e.link || '#')}" target="_blank" rel="noopener"><span class="cal-time mono">${esc(time)}</span><span class="cal-title">${esc(e.title)}</span></a></li>`;
+  }).join('')}</ul><p class="small muted mono">Updated ${new Date(cal.at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</p>`;
 }
 
 function setupCard() {
@@ -764,7 +791,7 @@ async function historyHtml(id) {
     if (e.action === 'update' || e.action === 'revert' || e.action === 'undo') {
       const keys = [...new Set([...Object.keys(e.before || {}), ...Object.keys(e.after || {})])]
         .filter((k) => JSON.stringify((e.before || {})[k]) !== JSON.stringify((e.after || {})[k]))
-        .filter((k) => !m.fields.find((x) => x.k === k)?.hidden);
+        .filter((k) => m.fields.find((x) => x.k === k) && !m.fields.find((x) => x.k === k).hidden);
       changes = keys.map((k) => `<li><span class="muted">${esc(label(k))}:</span> <s>${esc(show((e.before || {})[k]).slice(0, 80))}</s> → ${esc(show((e.after || {})[k]).slice(0, 80))}</li>`).join('');
     }
     const when = new Date(e.at);
@@ -809,6 +836,7 @@ async function viewSettings() {
   const last = await db.kvGet('lastSync');
   const theme = getTheme();
   const gm = (await db.kvGet('gmail')) || {};
+  const gc = await gcal.settings();
   return `${header('Settings', { back: '#/now' })}
   <section class="block">
     <span class="label">Appearance</span>
@@ -833,13 +861,22 @@ async function viewSettings() {
   </section>
 
   <section class="block">
-    <span class="label">Gmail · job applications</span>
-    <p class="small muted">Read-only. Scans for application confirmations, interview invites, rejections and offers, and suggests updates you accept or ignore. Needs a Google OAuth client ID (see the README).</p>
+    <span class="label">Google · Gmail & Calendar</span>
+    <p class="small muted">Gmail is read-only: it scans for application confirmations, interview invites, rejections and offers, and suggests updates you accept or ignore. Calendar shows your events on Now and adds dates from here to your calendar. Both need a Google OAuth client ID (see the README).</p>
     <form class="form" data-form="gmail">
       <div class="field"><label for="g-client">Google OAuth client ID</label><input id="g-client" name="clientId" value="${esc(gm.clientId || '')}" placeholder="1234-abc.apps.googleusercontent.com" autocomplete="off"></div>
       <div class="field"><label for="g-days">First scan looks back (days)</label><input id="g-days" name="firstDays" type="number" min="7" max="730" value="${esc(gm.firstDays || 90)}"></div>
       <div class="field check"><input id="g-ai" name="ai" type="checkbox" ${gm.ai ? 'checked' : ''}><label for="g-ai">Use AI through my Worker for better company and role detection (sends sender, subject and preview of matching emails)</label></div>
       <div class="form-actions"><button class="btn primary" type="submit">Save</button><button class="btn ghost" type="button" data-action="gmail-reset">Rescan from scratch</button></div>
+    </form>
+  </section>
+
+  <section class="block">
+    <span class="label">Google Calendar</span>
+    <form class="form" data-form="gcal">
+      <div class="field check"><input id="c-bday" name="birthdays" type="checkbox" ${gc.birthdays ? 'checked' : ''}><label for="c-bday">Add birthdays and anniversaries as yearly events</label></div>
+      <div class="field check"><input id="c-dead" name="deadlines" type="checkbox" ${gc.deadlines ? 'checked' : ''}><label for="c-dead">Add renewals and expiries (insurance, PUC, passport, warranty, subscriptions, maintenance…)</label></div>
+      <div class="form-actions"><button class="btn ghost" type="submit">Save</button><button class="btn primary" type="button" data-action="gcal-connect">Connect & add existing dates</button></div>
     </form>
   </section>
 
@@ -1023,10 +1060,24 @@ document.addEventListener('click', async (e) => {
       el.disabled = true;
       const status = $('#scan-status');
       try {
-        const r = await gmail.scan({ clientId: gm.clientId, useAi: !!gm.ai, onProgress: (m) => { if (status) status.textContent = m; } });
+        const r = await gmail.scan({ useAi: !!gm.ai, onProgress: (m) => { if (status) status.textContent = m; } });
         toast(r.added ? `${r.added} new suggestion${r.added === 1 ? '' : 's'}` : `Checked ${r.scanned} emails. Nothing new.`);
       } catch (err) {
         toast(err.message || 'Scan failed');
+      }
+      render();
+      break;
+    }
+    case 'gcal-refresh':
+    case 'gcal-connect': {
+      try {
+        await google.signIn(google.SCOPES.calendar);
+        if (a === 'gcal-connect') await gcal.queueAll();
+        await gcal.refreshEvents();
+        const r = await gcal.flush();
+        toast(r.done ? `Calendar updated · ${r.done} item${r.done === 1 ? '' : 's'} added or changed` : 'Calendar up to date');
+      } catch (err) {
+        toast(err.message || 'Calendar failed');
       }
       render();
       break;
@@ -1132,6 +1183,9 @@ document.addEventListener('submit', async (e) => {
       const rec = await gmail.accept(form.dataset.msg, { company: String(fd.get('company') || '').trim(), role: String(fd.get('role') || '').trim(), status: String(fd.get('status')) });
       toast(rec ? `Saved to Jobs: ${titleOf(rec)}` : 'Already handled', { undo: !!rec });
       render();
+    } else if (kind === 'gcal') {
+      await db.kvSet('gcal', { birthdays: form.elements.birthdays.checked, deadlines: form.elements.deadlines.checked });
+      toast('Saved');
     } else if (kind === 'gmail') {
       const fd = new FormData(form);
       await db.kvSet('gmail', { clientId: String(fd.get('clientId') || '').trim(), firstDays: Number(fd.get('firstDays')) || 90, ai: form.elements.ai.checked });
@@ -1168,6 +1222,7 @@ async function boot() {
   await db.init();
   db.onChange((info) => {
     if (info.type !== 'sync') sync.scheduleSync();
+    if (info.rec && info.type !== 'sync' && gcal.isEligible(info.rec.module)) gcal.enqueue(info.rec.id).then(() => gcal.flush());
     queueRender(info);
   });
   sync.onStatus((s) => {
@@ -1179,6 +1234,7 @@ async function boot() {
   window.addEventListener('hashchange', render);
   await render();
   sync.initSync();
+  if (google.hasToken(google.SCOPES.calendar)) gcal.refreshEvents().then(() => gcal.flush()).then(() => queueRender()).catch(() => {});
   retryPending();
   window.addEventListener('online', retryPending);
   if ('serviceWorker' in navigator && location.protocol === 'https:') {

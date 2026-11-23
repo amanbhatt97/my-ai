@@ -3,57 +3,18 @@
 // Nothing is added to Jobs until you accept a suggestion.
 
 import * as db from './db.js';
+import * as google from './google.js';
 
-const SCOPE = 'https://www.googleapis.com/auth/gmail.readonly';
 const API = 'https://gmail.googleapis.com/gmail/v1/users/me';
 const ATS = /(greenhouse|lever\.co|workday|myworkdayjobs|ashby|smartrecruiters|icims|jobvite|taleo|successfactors|linkedin|naukri|instahyre|indeed|wellfound|hirist|cutshort|iimjobs|foundit|monster|glassdoor|keka|darwinbox|zoho|freshteam|recruitee|workable|breezy|bamboohr|gmail|outlook|yahoo|google)/i;
 
 const RANK = { 'to apply': 0, applied: 1, screening: 2, interview: 3, offer: 4, accepted: 5, declined: 5, rejected: 5, ghosted: 5, withdrawn: 5 };
 
-let token = null;
-let tokenExpiry = 0;
-
-// ── auth (Google Identity Services) ────────────────────────────────────
-function loadGis() {
-  if (window.google?.accounts?.oauth2) return Promise.resolve();
-  return new Promise((resolve, reject) => {
-    const s = document.createElement('script');
-    s.src = 'https://accounts.google.com/gsi/client';
-    s.async = true;
-    s.onload = () => resolve();
-    s.onerror = () => reject(new Error('Could not load Google sign-in.'));
-    document.head.appendChild(s);
-  });
-}
-
-export async function getToken(clientId) {
-  if (token && Date.now() < tokenExpiry - 60000) return token;
-  await loadGis();
-  return new Promise((resolve, reject) => {
-    const client = window.google.accounts.oauth2.initTokenClient({
-      client_id: clientId,
-      scope: SCOPE,
-      callback: (resp) => {
-        if (resp.error) { reject(new Error(resp.error_description || resp.error)); return; }
-        token = resp.access_token;
-        tokenExpiry = Date.now() + Number(resp.expires_in || 3600) * 1000;
-        resolve(token);
-      },
-      error_callback: (err) => reject(new Error(err?.message || 'Google sign-in was closed.')),
-    });
-    client.requestAccessToken({ prompt: '' });
-  });
-}
-
-export function signOut() {
-  if (token && window.google?.accounts?.oauth2) window.google.accounts.oauth2.revoke(token, () => {});
-  token = null;
-  tokenExpiry = 0;
-}
-
 async function gmail(path) {
+  const token = google.tokenFor(google.SCOPES.gmail);
+  if (!token) throw new Error('Google sign-in expired. Scan again.');
   const res = await fetch(API + path, { headers: { Authorization: `Bearer ${token}` } });
-  if (res.status === 401) { token = null; throw new Error('Google sign-in expired. Scan again.'); }
+  if (res.status === 401) { google.expire(); throw new Error('Google sign-in expired. Scan again.'); }
   if (!res.ok) throw new Error(`Gmail error ${res.status}`);
   return res.json();
 }
@@ -218,8 +179,8 @@ function linkedIds() {
 }
 
 // ── scan ───────────────────────────────────────────────────────────────
-export async function scan({ clientId, useAi, onProgress = () => {} }) {
-  await getToken(clientId);
+export async function scan({ useAi, onProgress = () => {} }) {
+  await google.signIn(google.SCOPES.gmail);
   const last = await db.kvGet('gmailLastScan', null);
   const firstDays = (await db.kvGet('gmail', {})).firstDays || 90;
   const after = Math.floor((last ? Date.parse(last) - 2 * 864e5 : Date.now() - firstDays * 864e5) / 1000);

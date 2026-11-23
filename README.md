@@ -59,17 +59,25 @@ Before relying on it:
 
 Privacy note: voice audio and transcripts are sent to Sarvam (and to Anthropic if cleanup is on) to be processed. Everything stored afterwards is encrypted.
 
-### 4. Gmail → job applications (optional)
+### 4. Google: Gmail and Calendar (optional)
 
 The app reads your inbox **read-only**, right in your browser. It finds application confirmations, interview invites, rejections and offers, then shows them as suggestions under Jobs → Gmail. Nothing is added until you accept it. Emails are not stored; each job keeps the subject, date and a link back to the email.
 
 One-time Google setup (about 10 minutes):
 
 1. Go to [console.cloud.google.com](https://console.cloud.google.com/) and create a project (e.g. "Life").
-2. APIs & Services → Library → **Gmail API** → Enable.
-3. APIs & Services → **OAuth consent screen** → External. Fill in the app name and your email. Add the scope `.../auth/gmail.readonly`. Under **Test users**, add your Gmail address. Leave the app in *Testing*.
+2. APIs & Services → Library → enable **Gmail API** and **Google Calendar API**.
+3. APIs & Services → **OAuth consent screen** → External. Fill in the app name and your email. Add the scopes `.../auth/gmail.readonly` and `.../auth/calendar.events`. Under **Test users**, add your Gmail address. Leave the app in *Testing*.
 4. APIs & Services → **Credentials** → Create credentials → **OAuth client ID** → Web application. Under *Authorized JavaScript origins*, add `https://<username>.github.io`. Create it and copy the **Client ID**.
-5. In the app: Settings → Gmail → paste the Client ID → Save. Then Jobs → Gmail → **Scan Gmail**.
+5. In the app: Settings → Google → paste the Client ID → Save.
+   - **Gmail:** Jobs → Gmail → **Scan Gmail**.
+   - **Calendar:** Settings → Google Calendar → **Connect & add existing dates**.
+
+What Calendar does:
+- **Read:** your next two weeks of events show on Now (tap one to open it in Google Calendar).
+- **Write:** birthdays and anniversaries become yearly all-day events. Renewal and expiry dates (insurance, PUC, passport, warranty, subscriptions, maintenance, medicine refills, tax deadlines…) become all-day events. Each event gets a reminder that matches the app's own heads-up window. Editing a date updates its event; deleting the item, or marking it done, removes it. You can switch either kind off in Settings.
+- The app only touches events it created. Each one links back to its item in the app.
+- Sign-in lasts about an hour per browser tab. Changes made while signed out wait in a queue; tap **Send now** on Now to push them.
 
 Google will warn "Google hasn't verified this app". That's expected, because it's your own private app; choose Continue. Sign-in lasts about an hour, so later scans may ask you to pick your account again.
 
