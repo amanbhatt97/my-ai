@@ -4,7 +4,7 @@ import { Recorder, saveRecording, transcribe, retryPending, localStamp } from '.
 import * as gmail from './gmail.js';
 import * as gcal from './gcal.js';
 import * as google from './google.js';
-import { TREE, nodeById, pathTo, nodeForRoute, hrefOf, childrenOf, modulesUnder } from './tree.js';
+import { ROOMS, ROOM, PLAN_MODULES, roomOf, colorOf, homeOf } from './rooms.js';
 import { MODULES, MODULE, GROUPS, LINK_CATEGORIES, titleOf, defaults, isDone } from './schemas.js';
 
 // ── tiny helpers ────────────────────────────────────────────────────────
@@ -36,7 +36,7 @@ function weekNo(d = new Date()) {
   const y0 = new Date(Date.UTC(t.getUTCFullYear(), 0, 1));
   return Math.ceil(((t - y0) / 864e5 + 1) / 7);
 }
-const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 'S'}`;
+const plural = (n, w) => `${n} ${w.toLowerCase()}${n === 1 ? '' : 's'}`;
 const titleKey = (m) => (typeof m.title === 'string' ? m.title : m.fields.find((x) => x.req).k);
 
 // ── icons (inline stroke SVG) ───────────────────────────────────────────
@@ -78,7 +78,7 @@ function applyTheme(t) {
   if (t === 'system') document.documentElement.removeAttribute('data-theme');
   else document.documentElement.setAttribute('data-theme', t);
   const light = t === 'light' || (t === 'system' && matchMedia('(prefers-color-scheme: light)').matches);
-  document.querySelector('meta[name="theme-color"]').setAttribute('content', light ? '#eef1f4' : '#05060a');
+  document.querySelector('meta[name="theme-color"]').setAttribute('content', light ? '#f6f6f4' : '#0b0b0c');
 }
 
 // ── time progress (day / week / year) ──────────────────────────────────
@@ -178,22 +178,20 @@ const go = (hash) => { location.hash = hash; };
 const VIEWS = {
   now: viewNow, plan: viewPlan, journal: viewJournal, life: viewLife,
   m: viewModule, new: viewNew, r: viewRecord, search: viewSearch, settings: viewSettings, trash: viewTrash,
-  links: viewLinks, setup: viewSetup, progress: viewProgress, inbox: viewInbox, t: viewNode,
+  links: viewLinks, setup: viewSetup, progress: viewProgress, inbox: viewInbox, t: viewLife, room: viewRoom,
 };
 
 async function render() {
   currentRoute = parseRoute();
   formDirty = false;
-  currentCrumbs = crumbsFor(currentRoute);
+  currentBack = backFor(currentRoute);
   const view = VIEWS[currentRoute.name] || viewNow;
   const main = $('#main');
   main.innerHTML = await view(...currentRoute.parts);
   main.focus({ preventScroll: true });
   window.scrollTo(0, 0);
-  const top = currentRoute.name === 'now' ? 'today' : currentRoute.name === 't' ? (pathTo(currentRoute.parts[0])[1]?.id || 'life') : (currentCrumbs[1]?.id || (currentRoute.name === 'plan' ? 'plan' : 'life'));
-  for (const a of document.querySelectorAll('.nav a')) {
-    a.classList.toggle('on', a.dataset.nav === (['today', 'track', 'plan'].includes(top) ? top : 'life'));
-  }
+  const top = tabFor(currentRoute);
+  for (const a of document.querySelectorAll('.nav a, .side a[data-nav]')) a.classList.toggle('on', a.dataset.nav === top);
   renderSide();
   hydrate();
 }
@@ -210,43 +208,48 @@ async function hydrate() {
 }
 
 // ── shared pieces ───────────────────────────────────────────────────────
-let currentCrumbs = [];
-function crumbsFor(route) {
-  const { name, parts } = route;
-  let path = [];
-  if (name === 't') path = pathTo(parts[0]).slice(0, -1);
-  else if (name === 'm' || name === 'new') {
-    const mid = (parts[0] || '').split('?')[0];
-    path = pathTo(`m-${mid}`);
-    if (name === 'm' && !parts[1]) path = path.slice(0, -1);
-  } else if (name === 'r') {
-    const rec = db.get(parts[0]);
-    if (rec) {
-      path = pathTo(`m-${rec.module}`);
-      if (parts[1]) path.push({ id: 'rec', name: titleOf(rec).slice(0, 28), route: `#/r/${rec.id}` });
-    }
-  } else if (name !== 'now') {
-    const n = nodeForRoute(`#/${name}`);
-    if (n) path = pathTo(n.id).slice(0, -1);
-  }
-  return path;
+let currentBack = null;
+function moduleOfRoute({ name, parts }) {
+  if (name === 'm' || name === 'new') return (parts[0] || '').split('?')[0];
+  if (name === 'r') return db.get(parts[0])?.module || '';
+  return '';
 }
-function crumbsHtml(path) {
-  if (!path.length) return '';
-  return `<nav class="crumbs" aria-label="Breadcrumb">${path.map((n, i) => `${i ? '<span class="sep" aria-hidden="true">/</span>' : ''}<a href="${esc(n.href || hrefOf(n))}">${esc(n.name)}</a>`).join('')}</nav>`;
+function tabFor(route) {
+  if (route.name === 'now') return 'today';
+  if (route.name === 'search') return 'search';
+  if (route.name === 'plan' || route.name === 'progress') return 'plan';
+  const mid = moduleOfRoute(route);
+  if (mid && PLAN_MODULES.includes(mid)) return 'plan';
+  return 'life';
+}
+function backFor(route) {
+  const { name, parts } = route;
+  const mid = moduleOfRoute(route);
+  const special = (m) => (m === 'journal' ? { name: 'Journal', href: '#/journal' } : m === 'links' ? { name: 'Links', href: '#/links' } : null);
+  if (name === 'm') return parts[1] ? { name: MODULE[mid]?.name || 'Back', href: `#/m/${mid}` } : homeOf(mid);
+  if (name === 'new') return special(mid) || { name: MODULE[mid]?.name || 'Back', href: `#/m/${mid}` };
+  if (name === 'r') {
+    const r = db.get(parts[0]);
+    if (!r) return { name: 'Life', href: '#/life' };
+    if (parts[1]) return { name: 'Overview', href: `#/r/${r.id}` };
+    return special(r.module) || { name: MODULE[r.module].name, href: `#/m/${r.module}` };
+  }
+  if (name === 'room') return { name: 'Life', href: '#/life' };
+  if (name === 'journal' || name === 'links') return { name: 'Me', href: '#/room/me' };
+  if (name === 'inbox') return { name: 'Career', href: '#/room/career' };
+  if (name === 'progress') return { name: 'Plan', href: '#/plan' };
+  if (['settings', 'setup', 'trash'].includes(name)) return { name: 'Life', href: '#/life' };
+  return null;
 }
 
-function header(title, { kicker = '', back = '', actions = '' } = {}) {
-  const crumbs = crumbsHtml(currentCrumbs);
-  const parent = currentCrumbs[currentCrumbs.length - 1];
-  const backHref = back || (parent ? (parent.href || hrefOf(parent)) : '');
+function header(title, { kicker = '', back = null, actions = '', sub = '' } = {}) {
+  const b = back === false ? null : back || currentBack;
+  const k = kicker && kicker === kicker.toUpperCase() && !kicker.includes('<') ? kicker.charAt(0) + kicker.slice(1).toLowerCase() : kicker;
   return `<header class="top">
-    ${crumbs ? `<div class="top-meta">${crumbs}${actions ? `<div class="top-actions">${actions}</div>` : ''}</div>` : ''}
-    <div class="top-row">
-      ${backHref ? `<a class="icon-btn" href="${backHref}" aria-label="Back">${icon('back')}</a>` : ''}
-      <div class="top-title">${kicker ? `<span class="kicker">${esc(kicker)}</span>` : ''}<h1>${esc(title)}</h1></div>
-      ${crumbs ? '' : `<div class="top-actions">${actions}</div>`}
-    </div>
+    ${b || actions ? `<div class="top-meta">${b ? `<a class="backlink" href="${esc(b.href)}">${icon('back', 16)}${esc(b.name)}</a>` : '<span></span>'}${actions ? `<div class="top-actions">${actions}</div>` : ''}</div>` : ''}
+    ${k ? `<div class="kicker">${k}</div>` : ''}
+    <h1>${esc(title)}</h1>
+    ${sub ? `<div class="sub">${esc(sub)}</div>` : ''}
   </header>`;
 }
 
@@ -300,7 +303,7 @@ function row(r, { showModule = false, noStatus = false } = {}) {
   const title = r.module === 'journal' ? (r.data.text || 'Voice entry').slice(0, 90) : titleOf(r);
   const sub = [showModule ? m.name : '', r.module === 'journal' ? `${fmtDay(r.data.at)} ${fmtTime(r.data.at)}` : subtitleOf(r)].filter(Boolean).join(' · ');
   return `<a class="row rich ${isDone(r) ? 'done' : ''}" href="#/r/${r.id}">
-    <span class="avatar" aria-hidden="true">${esc(title.trim().slice(0, 1).toUpperCase() || '·')}</span>
+    <span class="avatar" aria-hidden="true" style="--c:${colorOf(r.module)}">${esc(title.trim().slice(0, 1).toUpperCase() || '·')}</span>
     <span class="row-body"><span class="row-title">${esc(title)}</span>${sub ? `<span class="row-sub">${esc(sub)}</span>` : ''}</span>
     ${pillFor(r, { noStatus })}
   </a>`;
@@ -312,107 +315,84 @@ function emptyState(text, href, cta) {
 
 // ── NOW ─────────────────────────────────────────────────────────────────
 async function viewNow() {
-  const d = new Date();
-  const kicker = `${d.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' }).toUpperCase()} · W${weekNo(d)}`;
   const t = todayStr();
+  const now = new Date();
+  const t0 = startOfToday();
   const tasks = db.list('tasks')
     .filter((r) => r.data.status !== 'done' && (r.data.status === 'today' || (r.data.due && r.data.due <= t)))
     .sort((a, b) => (a.data.due || '9').localeCompare(b.data.due || '9'));
-  const next = tasks[0];
   const habits = db.list('habits').filter((r) => r.data.active !== false);
   const dayRec = db.list('days').find((r) => r.data.date === t);
   const mood = dayRec?.data.mood;
-  const heads = reminders().filter((x) => x.r.module !== 'tasks').slice(0, 8);
-  const lastEntry = db.list('journal').sort((a, b) => (b.data.at || '').localeCompare(a.data.at || ''))[0];
-  const mailCount = (await gmail.suggestions()).length;
+  const rems = reminders().filter((x) => x.r.module !== 'tasks');
+  const overdue = rems.filter((x) => x.days < 0);
+  const dueToday = rems.filter((x) => x.days === 0);
   const cal = await gcal.cachedEvents();
-  const calPending = (await gcal.pending()).length;
-  const calSetUp = !!(await google.clientId());
-  const nudgeList = await nudges();
-  const weekGoals = db.list('goals').filter((r) => r.data.horizon === 'week' && r.data.status !== 'dropped');
-  const doneToday = db.list('tasks').filter((r) => r.data.completedOn === t).length;
-  const taskTotal = tasks.length + doneToday;
+  const todayEvents = cal.events.filter((e) => (e.start || '').slice(0, 10) === t);
+  const lateTasks = tasks.filter((r) => r.data.due && r.data.due < t);
+  const left = tasks.length - lateTasks.length + dueToday.length;
+  const lateN = overdue.length + lateTasks.length;
+  const journaledToday = db.list('journal').some((r) => (r.data.at || '').startsWith(t));
+
+  let headline;
+  if (!left && !lateN) headline = `All clear.<br><span class="soft">${todayEvents.length ? `${plural(todayEvents.length, 'event')} on your calendar.` : 'Nothing due today.'}</span>`;
+  else headline = `${left ? `${plural(left, 'thing')} left` : 'Nothing else due'}${lateN ? `<br><span class="soft">and ${lateN} overdue.</span>` : '<br><span class="soft">You’re on track.</span>'}`;
+
+  // timeline: late → anytime → timed events → night
+  const items = [];
+  for (const x of overdue) items.push({ o: 0, html: `<li><span class="when late">Late</span><span class="dot" style="--c:${colorOf(x.r.module)}"></span><a class="what" href="#/r/${x.r.id}"><span>${esc(titleOf(x.r))}</span><small>${esc(x.label)} · ${rel(x.days)}</small></a></li>` });
+  for (const r of lateTasks) items.push({ o: 0, html: `<li><span class="when late">Late</span><button type="button" class="tick" data-action="task-done" data-id="${r.id}" aria-label="Mark ${esc(titleOf(r))} done">${icon('check', 14)}</button><a class="what" href="#/r/${r.id}"><span>${esc(titleOf(r))}</span><small>due ${rel(diffDays(parseDay(r.data.due), t0))}</small></a></li>` });
+  for (const x of dueToday) items.push({ o: 1, html: `<li><span class="when strong">Today</span><span class="dot" style="--c:${colorOf(x.r.module)}"></span><a class="what" href="#/r/${x.r.id}"><span>${esc(titleOf(x.r))}</span><small>${esc(x.label)}</small></a></li>` });
+  for (const r of tasks.filter((x) => !lateTasks.includes(x))) items.push({ o: 1, html: `<li><span class="when">Any</span><button type="button" class="tick" data-action="task-done" data-id="${r.id}" aria-label="Mark ${esc(titleOf(r))} done">${icon('check', 14)}</button><a class="what" href="#/r/${r.id}"><span>${esc(titleOf(r))}</span></a></li>` });
+  for (const e of todayEvents) {
+    const time = e.allDay ? 'All day' : new Date(e.start).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false });
+    items.push({ o: 2, k: e.start, html: `<li><span class="when strong">${esc(time)}</span><span class="dot" style="--c:#7AA2FF"></span><a class="what" href="${esc(e.link || '#')}" target="_blank" rel="noopener"><span>${esc(e.title)}</span><small>Google Calendar</small></a></li>` });
+  }
+  if (!journaledToday) items.push({ o: 3, html: `<li><span class="when">Night</span><span class="dot"></span><span class="what"><span>Journal: how did today go?</span></span><button type="button" class="link" data-action="record">Speak</button></li>` });
+  items.sort((a, b) => a.o - b.o || String(a.k || '').localeCompare(String(b.k || '')));
+
+  const coming = [
+    ...rems.filter((x) => x.days > 0 && x.days <= 21).map((x) => ({ days: x.days, html: `<li><a href="#/r/${x.r.id}"><span class="l"><span class="dot" style="--c:${colorOf(x.r.module)}"></span><span>${esc(titleOf(x.r))} · ${esc(x.label)}</span></span><span class="r">${rel(x.days)}</span></a></li>` })),
+    ...cal.events.filter((e) => (e.start || '').slice(0, 10) > t && !e.mine).map((e) => { const dd = diffDays(parseDay(e.start.slice(0, 10)), t0); return { days: dd, html: `<li><a href="${esc(e.link || '#')}" target="_blank" rel="noopener"><span class="l"><span class="dot" style="--c:#7AA2FF"></span><span>${esc(e.title)}</span></span><span class="r">${dd === 1 ? 'Tomorrow' : fmtDay(e.start.slice(0, 10))}</span></a></li>` }; }),
+  ].sort((a, b) => a.days - b.days).slice(0, 4);
+
+  const mailCount = (await gmail.suggestions()).length;
+  const nudge = (await nudges())[0];
+  const setupLeft = SETUP.length - SETUP.filter(setupDone).length;
+  let hint = '';
+  if (mailCount) hint = `<a class="hint-card" href="#/inbox"><span class="dot" style="--c:#7AA2FF"></span><span class="t"><b>${plural(mailCount, 'job update')} from Gmail</b><span>Review and add to your applications</span></span>${icon('chev', 16)}</a>`;
+  else if (setupLeft >= 5) hint = `<a class="hint-card" href="#/setup"><span class="dot"></span><span class="t"><b>Finish setting up · ${SETUP.length - setupLeft}/${SETUP.length}</b><span>Next: ${esc(SETUP.find((x) => !setupDone(x)).title)}</span></span>${icon('chev', 16)}</a>`;
+  else if (nudge) hint = `<div class="hint-card"><span class="dot"></span><span class="t"><b>${esc(nudge.text)}</b></span>${nudge.href ? `<a class="btn small" href="${esc(nudge.href)}">${esc(nudge.cta)}</a>` : `<button type="button" class="btn small" data-action="${nudge.action}"${nudge.id ? ` data-id="${nudge.id}"` : ''}>${esc(nudge.cta)}</button>`}<button type="button" class="icon-btn sm" data-action="nudge-dismiss" data-key="${esc(nudge.key)}" aria-label="Hide for today">×</button></div>`;
+
   const habitsDone = habits.filter((h) => (h.data.log || {})[t]).length;
-  const denom = taskTotal + habits.length;
-  const score = denom ? Math.round(((doneToday + habitsDone) / denom) * 100) : 0;
-
-  return `${header('Now', {
-    kicker,
-    actions: `<a class="icon-btn" href="#/progress" aria-label="Progress">${icon('chart')}</a><a class="icon-btn" href="#/search" aria-label="Search">${icon('search')}</a><a class="icon-btn" href="#/settings" aria-label="Settings">${icon('gear')}</a>`,
-  })}
-  <section class="hero" aria-label="Today at a glance">
-    <div class="ring" style="--p:${score}" role="img" aria-label="${score}% of today's tasks and habits done">
-      <div class="ring-in"><span class="ring-v">${score}<small>%</small></span><span class="ring-k mono">TODAY</span></div>
-    </div>
-    <div class="hero-side">
-      <div class="hero-kv"><span class="mono">TASKS</span><span class="hv">${doneToday}<small>/${taskTotal}</small></span></div>
-      <div class="hero-kv"><span class="mono">HABITS</span><span class="hv">${habitsDone}<small>/${habits.length}</small></span></div>
-      <div class="tp" aria-label="Time elapsed">${timeProgress().map(([k, v]) => `<div class="tp-item"><span class="mono">${k.toUpperCase()}</span><span class="tp-bar"><span style="width:${v}%"></span></span><span class="mono">${v}%</span></div>`).join('')}</div>
-    </div>
-  </section>
-  ${setupCard()}
-  ${mailCount ? `<a class="setup-card" href="#/inbox"><span class="mono small">GMAIL · ${mailCount}</span><span class="setup-next">Job updates to review</span></a>` : ''}
-  ${pinnedLinks()}
-  ${nudgesHtml(nudgeList)}
+  return `<header class="top">
+    <div class="kicker">${esc(now.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' }))}</div>
+    <h1>${headline}</h1>
+  </header>
+  <form class="capture" data-form="capture" role="search">
+    <input name="q" type="text" placeholder="Add, find or ask anything…" aria-label="Add, find or ask anything" autocomplete="off">
+    <button type="button" class="mic" data-action="record" aria-label="Speak">${icon('mic', 18)}</button>
+  </form>
+  ${hint}
   <div class="grid-2">
-    <section class="block">
-      <span class="label">Next</span>
-      ${next ? `<div class="next">
-          <button type="button" class="tick" data-action="task-done" data-id="${next.id}" aria-label="Mark done">${icon('check', 18)}</button>
-          <a href="#/r/${next.id}" class="next-title">${esc(titleOf(next))}</a>
-        </div>`
-        : `<p class="muted">Nothing scheduled for today. <a href="#" data-action="quick-add">Add a task</a></p>`}
+    <section class="block" aria-label="Today">
+      ${items.length ? `<ul class="tl">${items.map((i) => i.html).join('')}</ul>` : '<p class="muted">Nothing on today. Add a task above.</p>'}
     </section>
-
-    <section class="block">
-      <span class="label">Mood today</span>
-      <div class="mood" role="group" aria-label="Mood today">
-        ${[1, 2, 3, 4, 5].map((n) => `<button type="button" data-action="mood" data-v="${n}" class="${mood === n ? 'on' : ''}" aria-pressed="${mood === n}">${n}</button>`).join('')}
-      </div>
-    </section>
-
-    <section class="block">
-      <div class="label-row"><span class="label">Today · ${tasks.length}</span><a href="#/m/tasks" class="link">All tasks</a></div>
-      ${tasks.length ? `<ul class="checks">${tasks.map((r) => `<li>
-          <button type="button" class="tick" data-action="task-done" data-id="${r.id}" aria-label="Mark ${esc(titleOf(r))} done">${icon('check', 16)}</button>
-          <a href="#/r/${r.id}">${esc(titleOf(r))}</a>
-          ${r.data.due && r.data.due < t ? `<span class="warn small">${rel(diffDays(parseDay(r.data.due), startOfToday()))}</span>` : r.data.area ? `<span class="muted small">${esc(r.data.area)}</span>` : ''}
-        </li>`).join('')}</ul>` : '<p class="muted">Clear.</p>'}
-    </section>
-
-    <section class="block">
-      <div class="label-row"><span class="label">Calendar</span>${calSetUp ? `<button type="button" class="link" data-action="gcal-refresh">${cal.at ? 'Refresh' : 'Connect'}</button>` : '<a class="link" href="#/settings">Set up</a>'}</div>
-      ${calendarHtml(cal)}
-      ${calPending ? `<p class="small muted">${calPending} item${calPending === 1 ? '' : 's'} waiting to be added to Google Calendar. <button type="button" class="link" data-action="gcal-refresh">Send now</button></p>` : ''}
-    </section>
-
-    <section class="block">
-      <div class="label-row"><span class="label">Heads up</span></div>
-      ${heads.length ? `<ul class="heads">${heads.map((x) => `<li><a href="#/r/${x.r.id}">
-          <span>${esc(titleOf(x.r))} <span class="muted">· ${esc(x.label)}</span></span>
-          <span class="${x.days < 0 ? 'warn' : x.days <= 7 ? 'accent' : 'muted'} small mono">${rel(x.days)}</span>
-        </a></li>`).join('')}</ul>` : '<p class="muted">No upcoming deadlines, renewals or birthdays.</p>'}
-    </section>
-
-    <section class="block">
-      <div class="label-row"><span class="label">Habits</span><a href="#/progress" class="link">Progress</a></div>
-      ${habits.length ? `<div class="habits">${habits.map((h) => {
-        const on = !!(h.data.log || {})[t];
-        const s = streak(h.data.log || {});
-        return `<button type="button" class="chip ${on ? 'on' : ''}" data-action="habit" data-id="${h.id}" aria-pressed="${on}">${esc(h.data.name)}${s ? `<span class="chip-n mono">${s}d</span>` : ''}</button>`;
-      }).join('')}</div>` : `<p class="muted">Add 3–5 habits you want to keep. <a href="#/new/habits">Add one</a></p>`}
-    </section>
-
-    <section class="block">
-      <div class="label-row"><span class="label">This week</span><a href="#/plan/week" class="link">Plan</a></div>
-      ${weekGoals.length ? weekGoals.map((g) => progressRow(g)).join('') : `<p class="muted">No weekly goals. <a href="#/new/goals">Set this week's top 3</a></p>`}
-    </section>
-
-    <section class="block span-2">
-      <div class="label-row"><span class="label">Journal</span><a href="#/journal" class="link">Open</a></div>
-      ${lastEntry ? `<a class="quote" href="#/r/${lastEntry.id}"><span class="mono small muted">${fmtDay(lastEntry.data.at)} ${fmtTime(lastEntry.data.at)}</span>${esc((lastEntry.data.text || statusText(lastEntry.data.status)).slice(0, 160))}</a>` : ''}
-      <button type="button" class="btn primary wide" data-action="record">${icon('mic', 18)} Speak about your day</button>
-    </section>
+    <div>
+      <section class="block" aria-label="Habits">
+        <div class="label-row"><span class="label">Habits</span>${habits.length ? `<span class="small muted">${habitsDone} of ${habits.length}</span>` : ''}</div>
+        ${habits.length ? `<div class="habit-grid">${habits.map((h) => {
+          const on = !!(h.data.log || {})[t];
+          const st = streak(h.data.log || {});
+          return `<button type="button" class="habit-btn ${on ? 'on' : ''}" data-action="habit" data-id="${h.id}" aria-pressed="${on}"><b>${esc(h.data.name)}</b><span>${st ? plural(st, 'day') : '–'}</span></button>`;
+        }).join('')}</div>` : '<p class="muted">Pick 3–5 habits to keep. <a class="link" href="#/new/habits">Add one</a></p>'}
+      </section>
+      <section class="block" aria-label="Mood">
+        <span class="label">How's today?</span>
+        <div class="mood" role="group" aria-label="Mood today">${[1, 2, 3, 4, 5].map((n) => `<button type="button" data-action="mood" data-v="${n}" class="${mood === n ? 'on' : ''}" aria-pressed="${mood === n}">${n}</button>`).join('')}</div>
+      </section>
+      ${coming.length ? `<section class="block" aria-label="Coming up"><span class="label">Coming up</span><ul class="simple">${coming.map((c) => c.html).join('')}</ul></section>` : ''}
+    </div>
   </div>`;
 }
 
@@ -464,9 +444,6 @@ async function nudges() {
   const lastJ = db.list('journal').map((r) => (r.data.at || '').slice(0, 10)).sort().pop();
   if (ago(lastJ) >= 3) out.push({ key: 'journal', text: lastJ ? `No journal entry for ${ago(lastJ)} days. Talk for 30 seconds.` : 'Try the voice journal: talk about your day for 30 seconds.', action: 'record', cta: 'Speak' });
 
-  if (db.list('accounts').length && now.getDate() >= 2 && !db.list('networth').some((r) => r.data.month === t.slice(0, 7))) {
-    out.push({ key: 'networth', text: "Log this month's net worth snapshot.", href: `#/new/networth?month=${t.slice(0, 7)}`, cta: 'Log' });
-  }
   if (!(await db.kvGet('sync')) && db.all().length >= 15) out.push({ key: 'sync', text: 'Your data is only on this device. Turn on encrypted sync.', href: '#/settings', cta: 'Set up' });
 
   return out.filter((n) => dismissed[n.key] !== t);
@@ -711,7 +688,7 @@ async function viewPlan(horizon = 'year') {
   const goals = db.list('goals').filter((g) => g.data.horizon === horizon).sort((a, b) => (a.data.status === 'active' ? -1 : 1) - (b.data.status === 'active' ? -1 : 1));
   const revisit = reminders().filter((x) => x.r.module === 'decisions');
   const lastReview = db.list('reviews').sort((a, b) => (b.data.date || '').localeCompare(a.data.date || ''))[0];
-  return `${header('Plan', { kicker: 'GOALS · REVIEWS · DECISIONS' })}
+  return `${header('Plan', { kicker: 'Where you are going' })}
   <nav class="tabs" aria-label="Horizon">${hs.map((h) => `<a href="#/plan/${h}" class="${h === horizon ? 'on' : ''}" aria-current="${h === horizon ? 'page' : 'false'}">${h}</a>`).join('')}</nav>
   <section class="block">
     <div class="label-row"><span class="label">${esc(horizon)} goals</span><a class="link" href="#/new/goals?horizon=${horizon}">+ Goal</a></div>
@@ -732,10 +709,10 @@ async function viewPlan(horizon = 'year') {
       <a class="btn ghost wide" href="#/m/decisions">Decision log</a>
     </section>
   </div>
-  <section class="block">
-    <span class="label">Also</span>
-    <div class="links">${['vision', 'reviews', 'lessons'].map((id) => `<a href="#/m/${id}">${esc(MODULE[id].name)}</a>`).join('')}</div>
-  </section>`;
+  <section class="block"><span class="label">Everything in Plan</span><ul class="simple">
+    ${['tasks', 'habits', 'goals', 'reviews', 'decisions', 'lessons', 'vision'].map((m) => `<li><a href="#/m/${m}"><span class="l"><span>${esc(MODULE[m].name)}</span></span><span class="r">${db.list(m).length} ›</span></a></li>`).join('')}
+    <li><a href="#/progress"><span class="l"><span>Progress & streaks</span></span><span class="r">›</span></a></li>
+  </ul></section>`;
 }
 
 // ── JOURNAL ─────────────────────────────────────────────────────────────
@@ -772,85 +749,97 @@ async function viewJournal() {
 }
 
 // ── LIFE (all modules) ─────────────────────────────────────────────────
-function nodeCount(node) {
-  if (node.status) return db.list(node.module).filter((r) => r.data[MODULE[node.module].status] === node.status).length;
-  if (node.module) return db.list(node.module).length;
-  if (node.id === 'links') return db.list('links').length;
-  if (node.id === 'journal') return db.list('journal').length;
-  const mods = modulesUnder(node);
-  return mods.length ? mods.reduce((n, m) => n + db.list(m).length, 0) : null;
+// ── LIFE: 8 rooms ───────────────────────────────────────────────────────
+const sumOf = (mod, k) => db.list(mod).reduce((n, r) => n + (Number(r.data[k]) || 0), 0);
+const inr = (n) => `₹${Math.round(n).toLocaleString('en-IN')}`;
+function roomReminders(room) {
+  return reminders().filter((x) => room.modules.includes(x.r.module));
 }
-let dueCache = null;
-function dueUnder(node) {
-  if (!dueCache) {
-    dueCache = new Map();
-    for (const x of reminders()) if (x.days <= 14) dueCache.set(x.r.module, (dueCache.get(x.r.module) || 0) + 1);
+function roomKpis(room) {
+  const n = (m) => db.list(m).length;
+  switch (room.id) {
+    case 'career': {
+      const jobs = db.list('jobs');
+      return [['Active applications', jobs.filter((j) => !isDone(j) && j.data.status !== 'to apply').length], ['Interviews', jobs.filter((j) => j.data.status === 'interview').length]];
+    }
+    case 'money': return [['Invested', inr(sumOf('accounts', 'value'))], ['Loans outstanding', inr(sumOf('loans', 'outstanding'))]];
+    case 'health': return [['Medical records', n('medical')], ['Medicines', n('medicines')]];
+    case 'people': return [['People', n('people')], ['Favours open', db.list('favours').filter((f) => !f.data.done).length]];
+    case 'home': return [['Vehicles', n('vehicles')], ['Documents', n('documents')]];
+    case 'learning': return [['Reading', db.list('books').filter((b) => b.data.status === 'reading').length], ['Books done', db.list('books').filter((b) => b.data.status === 'done').length]];
+    case 'travel': return [['Trips', n('trips')], ['Countries', new Set(db.list('trips').map((x) => (x.data.country || '').trim().toLowerCase()).filter(Boolean)).size]];
+    default: return [['Journal entries', n('journal')], ['Links', n('links')]];
   }
-  if (node.status) return 0;
-  return modulesUnder(node).reduce((n, m) => n + (dueCache.get(m) || 0), 0);
 }
-
-function treeOpen() { try { return new Set(JSON.parse(localStorage.getItem('treeOpen') || '["areas"]')); } catch { return new Set(['areas']); } }
-function setTreeOpen(id, open) {
-  const s = treeOpen();
-  if (open) s.add(id); else s.delete(id);
-  try { localStorage.setItem('treeOpen', JSON.stringify([...s])); } catch { /* ignore */ }
-}
-
-function treeHtml(node, { depth = 0, open = treeOpen(), active = new Set(), compact = false } = {}) {
-  const kids = childrenOf(node);
-  return `<ul class="tree ${depth ? '' : 'tree-root'}">${kids.map((c) => {
-    const sub = childrenOf(c);
-    const n = nodeCount(c);
-    const due = dueUnder(c);
-    const href = c.href || hrefOf(c);
-    const isActive = active.has(c.id);
-    const label = `<a class="tn-link ${isActive ? 'on' : ''}" href="${esc(href)}">${c.icon ? `<span class="tn-ico">${icon(c.icon, 16)}</span>` : ''}<span class="tn-name">${esc(c.name)}</span>${due ? `<span class="tn-due" title="${due} due soon">${due}</span>` : ''}${n !== null ? `<span class="tn-n mono">${n}</span>` : ''}</a>`;
-    if (!sub.length || (compact && depth >= 3)) return `<li class="tn leaf">${label}</li>`;
-    const isOpen = open.has(c.id) || isActive;
-    return `<li class="tn"><details data-node="${esc(c.id)}" ${isOpen ? 'open' : ''}><summary><span class="tn-chev" aria-hidden="true">${icon('chev', 14)}</span>${label}</summary>${treeHtml(c, { depth: depth + 1, open, active, compact })}</details></li>`;
-  }).join('')}</ul>`;
+function roomFact(room) {
+  const urgent = roomReminders(room).find((x) => x.days <= 14);
+  const second = room.modules.map((m) => MODULE[m].name).slice(0, 3).join(', ');
+  if (urgent) return [`${titleOf(urgent.r)}: ${urgent.label} · ${urgent.days < 0 ? `${-urgent.days}d overdue` : rel(urgent.days)}`, second];
+  const total = room.modules.reduce((s, m) => s + db.list(m).length, 0);
+  if (!total) return ['Nothing here yet', second];
+  const [k1, v1] = roomKpis(room)[0];
+  const word = v1 === 1 ? k1.toLowerCase().replace(/ies\b/, 'y').replace(/s\b/, '') : k1.toLowerCase();
+  return [`${v1} ${word}`, second];
 }
 
 async function viewLife() {
-  dueCache = null;
-  const total = db.all().length;
-  return `${header('Life', { kicker: `${plural(total, 'ITEM')} · TREE`, actions: `<a class="icon-btn" href="#/search" aria-label="Search">${icon('search')}</a>` })}
-  <div class="mode-legend mono"><span><i class="m-do"></i>DO · daily</span><span><i class="m-manage"></i>MANAGE · set up & edit</span></div>
-  <section class="block tree-block">${treeHtml(TREE)}</section>`;
+  const recent = db.all().filter((r) => MODULE[r.module]).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 5);
+  const ago = (iso) => { const m = (Date.now() - Date.parse(iso)) / 6e4; return m < 60 ? `${Math.max(1, Math.round(m))}m` : m < 1440 ? `${Math.round(m / 60)}h` : m < 2880 ? 'Yesterday' : fmtDay(iso.slice(0, 10)); };
+  return `${header('Life', { kicker: 'Everything you keep track of', actions: `<a class="icon-btn" href="#/settings" aria-label="Settings">${icon('gear', 18)}</a>` })}
+  <div class="rooms">${ROOMS.map((room) => {
+    const late = roomReminders(room).filter((x) => x.days < 0).length;
+    const [f1, f2] = roomFact(room);
+    return `<a class="room-card ${late ? 'alert' : ''}" href="#/room/${room.id}" style="--c:${room.color}">
+      <span class="rc-top"><span class="rc-name">${esc(room.name)}</span>${late ? `<span class="badge">${late}</span>` : `<span class="dot" style="--c:${room.color}"></span>`}</span>
+      <span class="rc-fact">${esc(f1)}<span>${esc(f2)}</span></span>
+    </a>`;
+  }).join('')}</div>
+  ${recent.length ? `<section class="block"><span class="label">Recently changed</span><ul class="simple">${recent.map((r) => `<li><a href="#/r/${r.id}"><span class="l"><span class="dot" style="--c:${colorOf(r.module)}"></span><span>${esc(r.module === 'journal' ? 'Journal entry' : titleOf(r))}</span></span><span class="r">${ago(r.updatedAt)}</span></a></li>`).join('')}</ul></section>` : ''}
+  <section class="block"><span class="label">More</span><ul class="simple">
+    <li><a href="#/setup"><span class="l"><span>Set up guide</span></span><span class="r">${SETUP.filter(setupDone).length}/${SETUP.length}</span></a></li>
+    <li><a href="#/settings"><span class="l"><span>Settings</span></span><span class="r">›</span></a></li>
+    <li><a href="#/trash"><span class="l"><span>Trash</span></span><span class="r">${db.trash().length}</span></a></li>
+  </ul></section>`;
 }
 
-async function viewNode(id) {
-  const node = nodeById(id);
-  if (!node) return emptyState('Unknown section.', '#/life', 'Back to Life');
-  dueCache = null;
-  const kids = childrenOf(node);
-  const n = nodeCount(node);
-  return `${header(node.name, { kicker: n !== null ? plural(n, 'ITEM') : '' })}
-  <div class="node-grid">${kids.map((c) => {
-    const sub = childrenOf(c);
-    const cn = nodeCount(c);
-    const due = dueUnder(c);
-    return `<a class="node-card" href="${esc(c.href || hrefOf(c))}">
-      <span class="nc-top">${c.icon ? `<span class="nc-ico">${icon(c.icon, 20)}</span>` : `<span class="nc-ico ghost">${icon('dot', 20)}</span>`}${cn !== null ? `<span class="nc-n">${cn}</span>` : ''}</span>
-      <span class="nc-name">${esc(c.name)}</span>
-      ${sub.length ? `<span class="nc-sub mono">${sub.slice(0, 4).map((x) => esc(x.name)).join(' · ')}${sub.length > 4 ? ' …' : ''}</span>` : ''}
-      ${due ? `<span class="nc-due mono">${due} due soon</span>` : cn === 0 ? '<span class="nc-start mono">Start →</span>' : ''}
-    </a>`;
-  }).join('')}</div>`;
+function collectionHref(m) {
+  return m === 'journal' ? '#/journal' : m === 'links' ? '#/links' : `#/m/${m}`;
+}
+
+async function viewRoom(id) {
+  const room = ROOM[id];
+  if (!room) return emptyState('Unknown room.', '#/life', 'Back to Life');
+  const attn = roomReminders(room).filter((x) => x.days <= Math.max(x.r ? 30 : 0, 30)).slice(0, 4);
+  return `<div class="room-head" style="--c:${room.color}">
+    ${header(room.name, { back: { name: 'Life', href: '#/life' } })}
+    <div class="kpis">${roomKpis(room).map(([k, v]) => `<div class="kpi"><span>${esc(k)}</span><b>${esc(String(v))}</b></div>`).join('')}</div>
+  </div>
+  ${attn.length ? `<section class="block"><span class="label">Needs attention</span><div class="attn">${attn.map((x) => {
+    const cls = x.days < 0 ? 'late' : x.days <= 7 ? 'soon' : '';
+    const txt = x.days < 0 ? `${-x.days}d` : x.days === 0 ? 'Today' : `${x.days}d`;
+    return `<a href="#/r/${x.r.id}"><span class="cd-badge ${cls}">${txt}</span><span class="t"><span>${esc(titleOf(x.r))}</span><span>${esc(x.label)} · ${x.days < 0 ? 'overdue' : rel(x.days)}</span></span></a>`;
+  }).join('')}</div></section>` : ''}
+  <section class="block"><span class="label">In this room</span><ul class="simple">
+    ${room.modules.map((m) => `<li><a href="${collectionHref(m)}"><span class="l"><span>${esc(MODULE[m].name)}</span></span><span class="r">${db.list(m).length} ›</span></a></li>`).join('')}
+    ${(room.extra || []).map((e) => `<li><a href="${esc(e.href)}"><span class="l"><span>${esc(e.name)}</span></span><span class="r">›</span></a></li>`).join('')}
+  </ul></section>`;
 }
 
 function renderSide() {
   const side = $('#side');
   if (!side) return;
-  dueCache = null;
-  const active = new Set(currentCrumbs.map((n) => n.id));
-  if (currentRoute.name === 'm') active.add(`m-${currentRoute.parts[0]}`);
-  if (currentRoute.name === 't') active.add(currentRoute.parts[0]);
-  const rn = nodeForRoute(`#/${currentRoute.name}`);
-  if (rn) active.add(rn.id);
-  if (currentRoute.name === 'now') active.add('today');
-  side.innerHTML = `<a class="side-brand" href="#/now"><span class="side-logo">${icon('now', 18)}</span><span>Life</span></a>${treeHtml(TREE, { active, compact: true })}`;
+  const curRoom = currentRoute.name === 'room' ? currentRoute.parts[0] : roomOf(moduleOfRoute(currentRoute))?.id;
+  side.innerHTML = `<a class="brand" href="#/now">Life</a>
+    <a href="#/now" data-nav="today">${icon('now', 18)}Today</a>
+    <a href="#/life" data-nav="life">${icon('life', 18)}Life</a>
+    <a href="#/plan" data-nav="plan">${icon('plan', 18)}Plan</a>
+    <a href="#/search" data-nav="search">${icon('search', 18)}Search</a>
+    <div class="side-h">Rooms</div>
+    ${ROOMS.map((r) => `<a href="#/room/${r.id}" class="${curRoom === r.id ? 'on' : ''}"><span class="dot" style="--c:${r.color}"></span>${esc(r.name)}</a>`).join('')}
+    <div class="side-h">More</div>
+    <a href="#/settings">${icon('gear', 18)}Settings</a>`;
+  const top = tabFor(currentRoute);
+  for (const a of side.querySelectorAll('a[data-nav]')) a.classList.toggle('on', a.dataset.nav === top && !curRoom);
 }
 
 // ── MODULE LIST ─────────────────────────────────────────────────────────
@@ -953,18 +942,29 @@ function fieldHtml(fd, value) {
   }
 }
 
-// Show the first few fields plus any that have a value; tuck the rest away.
+// Forms are a small tree too: fields grouped into sub-sections.
+const FGROUPS = [
+  { id: 'basics', name: 'Basics', test: (fd) => !['date', 'datetime', 'money', 'url', 'links', 'long'].includes(fd.type) },
+  { id: 'dates', name: 'Dates & reminders', test: (fd) => fd.type === 'date' || fd.type === 'datetime' },
+  { id: 'money', name: 'Money', test: (fd) => fd.type === 'money' },
+  { id: 'files', name: 'Files & links', test: (fd) => fd.type === 'url' || fd.type === 'links' },
+  { id: 'notes', name: 'Notes', test: (fd) => fd.type === 'long' },
+];
 function formFields(m, data) {
-  const visible = m.fields.filter((fd) => !fd.hidden);
-  const hasVal = (fd) => {
-    const v = data[fd.k];
-    return !(v === undefined || v === '' || v === null || v === false || (Array.isArray(v) && !v.length)) && fd.def !== v;
-  };
-  const primary = [];
-  const extra = [];
-  visible.forEach((fd, i) => ((i < 4 || fd.req || hasVal(fd) || fd.readonly || fd.remind !== undefined) ? primary : extra).push(fd));
-  return `${primary.map((fd) => fieldHtml(fd, data[fd.k])).join('')}
-    ${extra.length ? `<details class="more"><summary>More details <span class="mono small muted">${extra.length}</span></summary><div class="form">${extra.map((fd) => fieldHtml(fd, data[fd.k])).join('')}</div></details>` : ''}`;
+  const visible = m.fields.filter((fd) => !fd.hidden && !(fd.readonly && isEmpty(data[fd.k])));
+  if (visible.length <= 5) return visible.map((fd) => fieldHtml(fd, data[fd.k])).join('');
+  const has = (fd) => !isEmpty(data[fd.k]) && data[fd.k] !== false;
+  return FGROUPS.map((g) => {
+    const fs = visible.filter(g.test);
+    if (!fs.length) return '';
+    const filled = fs.filter(has).length;
+    const tk = typeof m.title === 'string' ? m.title : '';
+    const open = g.id === 'basics' || fs.some((fd) => fd.req || fd.remind !== undefined || fd.k === tk) || filled > 0;
+    return `<details class="fgroup" ${open ? 'open' : ''}>
+      <summary><span class="fg-name">${esc(g.name)}</span><span class="fg-n mono">${filled}/${fs.length}</span></summary>
+      <div class="fg-body">${fs.map((fd) => fieldHtml(fd, data[fd.k])).join('')}</div>
+    </details>`;
+  }).join('');
 }
 
 function readForm(form, m) {
@@ -1073,7 +1073,7 @@ async function viewRecord(id, tab = 'view') {
   const done = isDone(r);
   const doneToggle = m.fields.find((x) => x.type === 'check' && ['done', 'settled'].includes(x.k));
 
-  return `${header(title, { actions: deleted ? '' : `<a class="icon-btn" href="#/r/${id}/edit" aria-label="Edit">${icon('edit')}</a>` })}
+  return `${header(title, { kicker: `<span class="dot" style="--c:${colorOf(r.module)}"></span>${esc(m.name)}`, sub: isJournal ? '' : subtitleOf(r), actions: deleted ? '' : `<a class="link" href="#/r/${id}/edit">Edit</a>` })}
   ${trashNote}${tabs}
   ${statusField ? `<section class="block">
     <span class="label">${esc(statusField.label)}</span>
@@ -1087,12 +1087,17 @@ async function viewRecord(id, tab = 'view') {
   ${filled.length ? `<section class="block"><span class="label">Details</span><dl class="spec">${filled.map((fd) => `<div><dt>${esc(fd.label)}</dt><dd>${valueHtml(fd, r.data[fd.k], r)}</dd></div>`).join('')}</dl></section>` : ''}
   ${longs.map((fd) => `<section class="block"><span class="label">${esc(fd.label)}</span><p class="prose">${esc(r.data[fd.k])}</p></section>`).join('')}
   ${r.module === 'jobs' && (r.data.emails || []).length ? `<section class="block"><span class="label">Emails</span><ul class="heads">${r.data.emails.slice().sort((a, b) => b.date.localeCompare(a.date)).map((em) => `<li><a href="${esc(gmail.mailLink(em.threadId))}" target="_blank" rel="noopener"><span>${esc(em.subject)}</span><span class="mono small muted">${fmtDay(em.date)}</span></a></li>`).join('')}</ul></section>` : ''}
-  ${empty.length && !deleted ? `<a class="add-more" href="#/r/${id}/edit"><span class="mono">+ ${empty.length} EMPTY FIELD${empty.length === 1 ? '' : 'S'}</span><span class="small muted">${esc(empty.slice(0, 4).map((x) => x.label).join(', '))}${empty.length > 4 ? '…' : ''}</span></a>` : ''}
+  ${empty.length && !deleted ? `<a class="add-more" href="#/r/${id}/edit"><b>+ Add details</b><span>${esc(empty.slice(0, 4).map((x) => x.label).join(', '))}${empty.length > 4 ? '…' : ''}</span></a>` : ''}
   <div class="record-foot">
-    ${doneToggle && !deleted ? `<button type="button" class="btn ${done ? 'ghost' : 'primary'} small" data-action="toggle-done" data-id="${id}" data-k="${doneToggle.k}">${done ? 'Mark not done' : `Mark ${doneToggle.label.toLowerCase()}`}</button>` : ''}
     ${deleted ? '' : `<button class="btn danger small" type="button" data-action="delete" data-id="${id}">Delete</button>`}
-    <span class="small muted mono">Updated ${fmtDay(r.updatedAt.slice(0, 10))} ${r.updatedAt.slice(11, 16)} UTC</span>
-  </div>`;
+    <span class="mono">Updated ${fmtDay(r.updatedAt.slice(0, 10))}</span>
+  </div>
+  ${deleted ? '' : `<div class="action-bar">
+    <a class="btn" href="#/r/${id}/edit">Edit</a>
+    ${r.module === 'tasks' && !done ? `<button type="button" class="btn primary" data-action="set-status" data-id="${id}" data-v="done">Mark done</button>`
+      : doneToggle ? `<button type="button" class="btn ${done ? '' : 'primary'}" data-action="toggle-done" data-id="${id}" data-k="${doneToggle.k}">${done ? 'Mark not done' : `Mark ${doneToggle.label.toLowerCase()}`}</button>`
+      : isJournal ? '<button type="button" class="btn primary" data-action="record">New entry</button>' : ''}
+  </div>`}`;
 }
 
 function journalExtras(r) {
@@ -1242,13 +1247,13 @@ async function viewSettings() {
 
 // ── quick add sheet ─────────────────────────────────────────────────────
 const QUICK = ['tasks', 'journal', 'jobs', 'ideas', 'people', 'decisions', 'wins', 'notes'];
-function openQuickAdd(preset = 'tasks') {
+function openQuickAdd(preset = 'tasks', text = '') {
   const sheet = $('#sheet');
   sheet.innerHTML = `<div class="sheet-card" role="dialog" aria-modal="true" aria-label="Quick add">
     <div class="grab"></div>
     <form data-form="quick">
       <label for="q-text" class="label">Add</label>
-      <textarea id="q-text" name="text" rows="2" placeholder="Type anything…" required></textarea>
+      <textarea id="q-text" name="text" rows="2" placeholder="Type anything…" required>${esc(text)}</textarea>
       <div class="chips" role="radiogroup" aria-label="Type">
         ${QUICK.map((id) => `<label class="chip-radio"><input type="radio" name="module" value="${id}" ${id === preset ? 'checked' : ''}><span>${esc(MODULE[id].name.replace('Job applications', 'Job'))}</span></label>`).join('')}
         <a class="chip" href="#/life" data-action="close-sheet">More…</a>
@@ -1510,6 +1515,12 @@ document.addEventListener('submit', async (e) => {
         toast('Saved', { undo: true });
         if (location.hash === `#/r/${form.dataset.id}`) render(); else location.hash = `#/r/${form.dataset.id}`;
       }
+    } else if (kind === 'capture') {
+      const q = form.elements.q.value.trim();
+      if (!q) return;
+      // "?something" or a match in your data → search; otherwise add it
+      if (q.startsWith('?')) { location.hash = '#/search'; setTimeout(() => { const i = $('#global-q'); if (i) { i.value = q.slice(1).trim(); i.dispatchEvent(new Event('input', { bubbles: true })); } }, 60); return; }
+      openQuickAdd('tasks', q);
     } else if (kind === 'quick') {
       const text = form.elements.text.value.trim();
       const id = form.elements.module.value;
@@ -1554,10 +1565,6 @@ document.addEventListener('submit', async (e) => {
     toast(err.message || 'Something went wrong');
   }
 });
-
-document.addEventListener('toggle', (e) => {
-  if (e.target.matches && e.target.matches('details[data-node]')) setTreeOpen(e.target.dataset.node, e.target.open);
-}, true);
 
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && $('#sheet').classList.contains('open') && !recorder) closeSheet();

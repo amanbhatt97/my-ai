@@ -199,11 +199,11 @@ export const MODULES = [
     fields: [f('month', 'Month', 'text', { req: true, ph: '2026-11' }), f('assets', 'Total assets', 'money'), f('liabilities', 'Total loans', 'money'), notes],
   },
   {
-    id: 'accounts', name: 'Accounts & investments', group: 'Money', title: 'name',
+    id: 'accounts', name: 'Investments & accounts', group: 'Money', title: 'name',
     fields: [f('name', 'Name', 'text', { req: true }), f('kind', 'Type', 'select', { options: ['bank', 'mutual fund', 'stocks', 'EPF', 'PPF', 'NPS', 'FD', 'gold', 'crypto', 'other'] }), f('where', 'Held with', 'text'), f('last4', 'Account no. (last 4)', 'secret4'), f('value', 'Current value', 'money'), f('nominee', 'Nominee', 'text'), f('maturity', 'Maturity date', 'date', { remind: 30 }), notes],
   },
   {
-    id: 'loans', name: 'Loans & cards', group: 'Money', title: 'name',
+    id: 'loans', name: 'Loans & EMIs', group: 'Money', title: 'name',
     fields: [f('name', 'Name', 'text', { req: true }), f('kind', 'Type', 'select', { options: ['home loan', 'car loan', 'personal loan', 'education loan', 'credit card', 'other'] }), f('lender', 'Lender', 'text'), f('emi', 'EMI / due amount', 'money'), f('dueDay', 'Due day of month', 'number'), f('endDate', 'Ends on', 'date'), f('outstanding', 'Outstanding', 'money'), notes],
   },
   {
