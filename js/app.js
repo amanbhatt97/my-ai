@@ -48,6 +48,7 @@ const I = {
   now: '<path d="M12 3v3M12 18v3M3 12h3M18 12h3"/><circle cx="12" cy="12" r="4"/>',
   plan: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="0.5"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
+  mail: '<rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="m4 7 8 6 8-6"/>',
   spark: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 16l.7 1.8 1.8.7-1.8.7L19 21l-.7-1.8-1.8-.7 1.8-.7z"/>',
   mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>',
   journal: '<path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z"/><path d="M5 17a3 3 0 0 1 3-3h11"/>',
@@ -83,7 +84,7 @@ function applyTheme(t) {
   if (t === 'system') document.documentElement.removeAttribute('data-theme');
   else document.documentElement.setAttribute('data-theme', t);
   const light = t === 'light' || (t === 'system' && matchMedia('(prefers-color-scheme: light)').matches);
-  document.querySelector('meta[name="theme-color"]').setAttribute('content', light ? '#f2f2f7' : '#000000');
+  document.querySelector('meta[name="theme-color"]').setAttribute('content', light ? '#f7f8fa' : '#0b0c11');
 }
 
 // ── time progress (day / week / year) ──────────────────────────────────
@@ -522,9 +523,10 @@ async function viewNow() {
 
   const coming = [
     ...rems.filter((x) => x.days > 0 && x.days <= 21).map((x) => ({ days: x.days, html: `<li><a href="#/r/${x.r.id}"><span class="l"><span class="dot" style="--c:${colorOf(x.r.module)}"></span><span>${esc(titleOf(x.r))} · ${esc(x.label)}</span></span><span class="r">${rel(x.days)}</span></a></li>` })),
-  ].sort((a, b) => a.days - b.days).slice(0, 4);
+  ].sort((a, b) => a.days - b.days).slice(0, 5);
 
   const mailCount = (await gmail.suggestions()).length;
+  gmailCount = mailCount;
   const nudge = (await nudges())[0];
   const setupLeft = SETUP.length - SETUP.filter(setupDone).length;
   let hint = '';
@@ -544,15 +546,11 @@ async function viewNow() {
   const calCard = await calendarCard(cal, t);
   const googleLink = setUp && !autosync.connected() ? '<button type="button" class="link" data-action="google-connect">Connect Google</button>' : '';
   return `<header class="top home-top">
-    <div class="home-row"><div class="kicker">${esc(now.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' }))}</div><a class="icon-btn" href="#/settings" aria-label="Settings">${icon('gear', 20)}</a></div>
+    <div class="kicker">${esc(now.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' }))}</div>
     <h1>${headline}</h1>
   </header>
-  <form class="capture" data-form="capture" role="search">
-    ${icon('search', 16)}<input name="q" type="text" placeholder="Ask, search or add anything" aria-label="Ask, search or add anything" autocomplete="off">
-    <button type="button" class="mic" data-action="record" aria-label="Speak">${icon('mic', 18)}</button>
-  </form>
-  <div id="capture-results" class="capture-results" hidden></div>
 
+  <div class="home-grid"><div class="home-main">
   <section class="block home-today" aria-label="Today">
     <div class="label-row"><span class="label">Today</span>${googleLink}</div>
     <div class="list">${items.length ? `<ul class="tl">${items.map((i) => i.html).join('')}</ul>` : '<p class="muted pad">Nothing due today.</p>'}</div>
@@ -567,8 +565,11 @@ async function viewNow() {
     }).join('')}</div>
   </section>` : ''}
 
+  </div><aside class="home-rail">
   ${hint ? `<section class="block">${hint}</section>` : ''}
   ${calCard}
+  ${coming.length ? `<section class="block" aria-label="Coming up"><span class="label">Next 3 weeks</span><div class="list"><ul class="simple">${coming.map((c) => c.html).join('')}</ul></div></section>` : ''}
+  </aside></div>
 
   <section class="block" aria-label="Areas">
     <div class="label-row"><span class="label">Everything you track</span><span class="small muted">Tap to open</span></div>
@@ -1242,7 +1243,66 @@ async function viewRoom(id) {
   </div>`;
 }
 
-function renderSide() { /* no sidebar: one layout everywhere */ }
+function renderSide() {
+  const el = $('#side');
+  if (!el) return;
+  const r = currentRoute;
+  const mod = moduleOfRoute(r);
+  const activeRoom = r.name === 'room' ? r.parts[0] : (mod && roomOf(mod)?.id) || '';
+  const open = new Set(lsGet('sideOpen', []));
+  if (activeRoom) open.add(activeRoom);
+  const navItem = (href, ic, label, on, extra = '') => `<a class="sd-item ${on ? 'on' : ''}" href="${href}">${icon(ic, 17)}<span>${esc(label)}</span>${extra}</a>`;
+  const mailN = gmailCount;
+  const areas = ROOMS.map((room) => {
+    const late = roomReminders(room).filter((x) => x.days < 0).length;
+    const isOpen = open.has(room.id);
+    const mods = room.modules.map((m) => {
+      const n = db.list(m).length;
+      const on = mod === m;
+      return `<a class="sd-sub ${on ? 'on' : ''}" href="${collectionHref(m)}"><span>${esc(MODULE[m].name)}</span>${n ? `<em>${n}</em>` : ''}</a>`;
+    }).join('');
+    return `<div class="sd-area ${isOpen ? 'open' : ''}" style="--c:${room.color}">
+      <div class="sd-area-row ${activeRoom === room.id && r.name === 'room' ? 'on' : ''}">
+        <a class="sd-area-link" href="#/room/${room.id}"><span class="sd-ico">${icon(room.icon || 'life', 15)}</span><span class="sd-area-name">${esc(room.name)}</span>${late ? `<span class="sd-late">${late}</span>` : ''}</a>
+        <button type="button" class="sd-caret" data-action="side-area" data-room="${room.id}" aria-expanded="${isOpen}" aria-label="Show what's in ${esc(room.name)}">${icon('chev', 14)}</button>
+      </div>
+      <div class="sd-subs">${mods}</div>
+    </div>`;
+  }).join('');
+  const done = SETUP.filter(setupDone).length;
+  el.innerHTML = `<nav class="sd-nav">
+      ${navItem('#/now', 'now', 'Home', r.name === 'now')}
+      ${navItem('#/plan', 'plan', 'Plan & goals', ['plan', 'progress', 'review'].includes(r.name) || (mod && PLAN_MODULES.includes(mod)))}
+      ${navItem('#/journal', 'mic', 'Journal', r.name === 'journal' || mod === 'journal')}
+      ${navItem('#/inbox', 'mail', 'From Gmail', r.name === 'inbox', mailN ? `<span class="sd-badge">${mailN}</span>` : '')}
+      <button type="button" class="sd-item" data-action="ask-brief">${icon('spark', 17)}<span>Brief me</span></button>
+    </nav>
+    <div class="sd-label">Areas</div>
+    <div class="sd-areas">${areas}</div>
+    <div class="sd-foot">
+      ${done < SETUP.length ? `<a class="sd-setup" href="#/setup"><span>Set up · ${done}/${SETUP.length}</span><span class="sd-bar"><i style="width:${Math.round((done / SETUP.length) * 100)}%"></i></span></a>` : ''}
+      <a class="sd-small" href="#/settings">Settings</a>
+    </div>`;
+}
+let gmailCount = 0;
+function clearCapture() {
+  const inp = document.querySelector('form.capture input'); if (inp) { inp.value = ''; inp.blur(); }
+  const box = $('#capture-results'); if (box) { box.hidden = true; box.innerHTML = ''; }
+}
+document.addEventListener('pointerdown', (e) => {
+  const box = $('#capture-results');
+  if (box && !box.hidden && !e.target.closest?.('.ab-search')) box.hidden = true;
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    if (document.body.classList.contains('side-open')) setSide(false);
+    if (e.target.matches?.('form.capture input')) clearCapture();
+  }
+});
+function setSide(open) {
+  document.body.classList.toggle('side-open', open);
+  document.querySelector('.ab-menu')?.setAttribute('aria-expanded', String(open));
+}
 
 // ── MODULE LIST ─────────────────────────────────────────────────────────
 function sortRecords(m, list) {
@@ -2053,7 +2113,25 @@ document.addEventListener('click', async (e) => {
       toast('Updated', { undo: true });
       break;
     }
-    case 'ask-brief': openAsk(BRIEF_Q); break;
+    case 'ask-brief': setSide(false); openAsk(BRIEF_Q); break;
+    case 'side-toggle': setSide(!document.body.classList.contains('side-open')); break;
+    case 'side-close': setSide(false); break;
+    case 'side-area': {
+      const set = new Set(lsGet('sideOpen', []));
+      const id = el.dataset.room;
+      const box = el.closest('.sd-area');
+      const open = !box.classList.contains('open');
+      if (open) set.add(id); else set.delete(id);
+      lsSet('sideOpen', [...set]);
+      box.classList.toggle('open', open);
+      el.setAttribute('aria-expanded', String(open));
+      break;
+    }
+    case 'theme-cycle': {
+      const light = document.documentElement.getAttribute('data-theme') === 'light' || (!document.documentElement.getAttribute('data-theme') && matchMedia('(prefers-color-scheme: light)').matches);
+      applyTheme(light ? 'dark' : 'light');
+      break;
+    }
     case 'area-toggle': {
       const card = el.closest('.area');
       const id = el.dataset.room;
@@ -2068,12 +2146,12 @@ document.addEventListener('click', async (e) => {
     }
     case 'capture-ask': {
       const inp = document.querySelector('form.capture input');
-      if (inp && inp.value.trim()) openAsk(inp.value.trim());
+      if (inp && inp.value.trim()) { const q = inp.value.trim(); clearCapture(); openAsk(q); }
       break;
     }
     case 'capture-add': {
       const inp = document.querySelector('form.capture input');
-      if (inp && inp.value.trim()) openQuickAdd('tasks', inp.value.trim());
+      if (inp && inp.value.trim()) { const q = inp.value.trim(); clearCapture(); openQuickAdd('tasks', q); }
       break;
     }
     case 'clear-due': {
@@ -2268,6 +2346,8 @@ document.addEventListener('submit', async (e) => {
       if (!q) return;
       // "?something" or a match in your data → search; otherwise add it
       if (q.startsWith('?')) { location.hash = '#/search'; setTimeout(() => { const i = $('#global-q'); if (i) { i.value = q.slice(1).trim(); i.dispatchEvent(new Event('input', { bubbles: true })); } }, 60); return; }
+      form.elements.q.value = ''; const box = $('#capture-results'); if (box) { box.hidden = true; box.innerHTML = ''; }
+      form.elements.q.blur();
       if (assistant.isQuestion(q)) { openAsk(q); return; }
       openQuickAdd('tasks', q);
     } else if (kind === 'ask') {
@@ -2432,7 +2512,7 @@ async function boot() {
     el.title = s.message;
     el.setAttribute('aria-label', `Sync: ${s.message}`);
   });
-  window.addEventListener('hashchange', render);
+  window.addEventListener('hashchange', () => { setSide(false); const box = $('#capture-results'); if (box) { box.hidden = true; } render(); });
   await render();
   sync.initSync();
   autosync.start((r) => {
