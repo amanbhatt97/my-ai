@@ -181,3 +181,23 @@ export async function queueAll() {
   }
   await db.kvSet('gcalQueue', [...q]);
 }
+
+
+// A task with a date → an all-day event (or update the one already made).
+export async function addTaskEvent(id) {
+  const t = db.get(id);
+  if (!t) return null;
+  const date = t.data.due || new Date(Date.now() - new Date().getTimezoneOffset() * 6e4).toISOString().slice(0, 10);
+  const body = {
+    summary: t.data.title,
+    description: `Task from your Life tracker: ${location.origin}${location.pathname}#/r/${t.id}${t.data.notes ? `\n\n${t.data.notes}` : ''}`,
+    start: { date }, end: { date: nextDay(date) },
+    reminders: { useDefault: false, overrides: [{ method: 'popup', minutes: 0 }] },
+    extendedProperties: { private: { lifeId: t.id, lifeField: 'task' } },
+  };
+  let ev = null;
+  if (t.data.gcalEvent?.id) ev = await api(`/events/${t.data.gcalEvent.id}`, { method: 'PUT', body: JSON.stringify(body) });
+  if (!ev) ev = await api('/events', { method: 'POST', body: JSON.stringify(body) });
+  await db.update(id, { gcalEvent: { id: ev.id, link: ev.htmlLink || '', date } }, { silentUndo: true });
+  return ev;
+}

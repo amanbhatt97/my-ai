@@ -4,6 +4,7 @@ import { Recorder, saveRecording, transcribe, retryPending, localStamp } from '.
 import * as gmail from './gmail.js';
 import * as gcal from './gcal.js';
 import * as drive from './drive.js';
+import * as gtasks from './gtasks.js';
 import * as google from './google.js';
 import { ROOMS, ROOM, PLAN_MODULES, roomOf, colorOf, homeOf } from './rooms.js';
 import { MODULES, MODULE, GROUPS, LINK_CATEGORIES, titleOf, defaults, isDone } from './schemas.js';
@@ -346,16 +347,11 @@ async function viewNow() {
   for (const r of lateTasks) items.push({ o: 0, html: `<li><span class="when late">Late</span><button type="button" class="tick" data-action="task-done" data-id="${r.id}" aria-label="Mark ${esc(titleOf(r))} done">${icon('check', 14)}</button><a class="what" href="#/r/${r.id}"><span>${esc(titleOf(r))}</span><small>due ${rel(diffDays(parseDay(r.data.due), t0))}</small></a></li>` });
   for (const x of dueToday) items.push({ o: 1, html: `<li><span class="when strong">Today</span><span class="dot" style="--c:${colorOf(x.r.module)}"></span><a class="what" href="#/r/${x.r.id}"><span>${esc(titleOf(x.r))}</span><small>${esc(x.label)}</small></a></li>` });
   for (const r of tasks.filter((x) => !lateTasks.includes(x))) items.push({ o: 1, html: `<li><span class="when">Any</span><button type="button" class="tick" data-action="task-done" data-id="${r.id}" aria-label="Mark ${esc(titleOf(r))} done">${icon('check', 14)}</button><a class="what" href="#/r/${r.id}"><span>${esc(titleOf(r))}</span></a></li>` });
-  for (const e of todayEvents) {
-    const time = e.allDay ? 'All day' : new Date(e.start).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false });
-    items.push({ o: 2, k: e.start, html: `<li><span class="when strong">${esc(time)}</span><span class="dot" style="--c:#7AA2FF"></span><a class="what" href="${esc(e.link || '#')}" target="_blank" rel="noopener"><span>${esc(e.title)}</span><small>Google Calendar</small></a></li>` });
-  }
   if (!journaledToday) items.push({ o: 3, html: `<li><span class="when">Night</span><span class="dot"></span><span class="what"><span>Journal: how did today go?</span></span><button type="button" class="link" data-action="record">Speak</button></li>` });
   items.sort((a, b) => a.o - b.o || String(a.k || '').localeCompare(String(b.k || '')));
 
   const coming = [
     ...rems.filter((x) => x.days > 0 && x.days <= 21).map((x) => ({ days: x.days, html: `<li><a href="#/r/${x.r.id}"><span class="l"><span class="dot" style="--c:${colorOf(x.r.module)}"></span><span>${esc(titleOf(x.r))} · ${esc(x.label)}</span></span><span class="r">${rel(x.days)}</span></a></li>` })),
-    ...cal.events.filter((e) => (e.start || '').slice(0, 10) > t && !e.mine).map((e) => { const dd = diffDays(parseDay(e.start.slice(0, 10)), t0); return { days: dd, html: `<li><a href="${esc(e.link || '#')}" target="_blank" rel="noopener"><span class="l"><span class="dot" style="--c:#7AA2FF"></span><span>${esc(e.title)}</span></span><span class="r">${dd === 1 ? 'Tomorrow' : fmtDay(e.start.slice(0, 10))}</span></a></li>` }; }),
   ].sort((a, b) => a.days - b.days).slice(0, 4);
 
   const mailCount = (await gmail.suggestions()).length;
@@ -382,6 +378,7 @@ async function viewNow() {
       ${items.length ? `<ul class="tl">${items.map((i) => i.html).join('')}</ul>` : '<p class="muted">Nothing on today. Add a task above.</p>'}
     </section>
     <div>
+      ${await calendarCard(cal, t)}
       <section class="block" aria-label="Habits">
         <div class="label-row"><span class="label">Habits</span>${habits.length ? `<span class="small muted">${habitsDone} of ${habits.length}</span>` : ''}</div>
         ${habits.length ? `<div class="habit-grid">${habits.map((h) => {
@@ -858,6 +855,26 @@ function roomFact(room) {
   return [`${v1} ${word}`, second];
 }
 
+async function calendarCard(cal, t) {
+  const setUp = !!(await google.clientId());
+  const head = `<div class="label-row"><span class="label">Calendar</span>${setUp ? `<span class="row-actions"><button type="button" class="link" data-action="gtasks-sync">Google Tasks</button><button type="button" class="link" data-action="gcal-refresh">${cal.at ? 'Refresh' : 'Connect'}</button></span>` : ''}</div>`;
+  if (!setUp) return `<section class="block cal-card">${head}<a class="hint-card" href="#/settings"><span class="dot" style="--c:#7AA2FF"></span><span class="t"><b>Connect Google Calendar</b><span>See your events here, turn them into tasks, and send tasks to your calendar.</span></span>${icon('chev', 16)}</a></section>`;
+  if (!cal.at) return `<section class="block cal-card">${head}<button type="button" class="hint-card" data-action="gcal-refresh"><span class="dot" style="--c:#7AA2FF"></span><span class="t"><b>Show your calendar</b><span>Sign in once with Google to load your events.</span></span>${icon('chev', 16)}</button></section>`;
+  const t0 = startOfToday();
+  const upcoming = cal.events.filter((e) => (e.start || '').slice(0, 10) >= t && !e.mine).slice(0, 6);
+  const madeTasks = new Set(db.list('tasks').map((x) => x.data.fromEvent).filter(Boolean));
+  let last = '';
+  const rows = upcoming.map((e) => {
+    const day = e.start.slice(0, 10);
+    const dd = diffDays(parseDay(day), t0);
+    const head2 = day !== last ? `<li class="cal-day">${dd === 0 ? 'Today' : dd === 1 ? 'Tomorrow' : esc(fmtDay(day))}</li>` : '';
+    last = day;
+    const time = e.allDay ? 'All day' : new Date(e.start).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false });
+    return `${head2}<li class="cal-ev"><span class="cal-time">${esc(time)}</span><a class="cal-title" href="${esc(e.link || '#')}" target="_blank" rel="noopener">${esc(e.title)}</a>${madeTasks.has(e.id) ? '<span class="pill ghost">task</span>' : `<button type="button" class="chip mini" data-action="event-task" data-eid="${esc(e.id)}" aria-label="Make a task from ${esc(e.title)}">+ Task</button>`}</li>`;
+  }).join('');
+  return `<section class="block cal-card">${head}${rows ? `<ul class="cal">${rows}</ul>` : '<p class="muted small">Nothing on your calendar for the next two weeks.</p>'}</section>`;
+}
+
 function lifeHtml() {
   const recent = db.all().filter((r) => MODULE[r.module]).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 5);
   const ago = (iso) => { const m = (Date.now() - Date.parse(iso)) / 6e4; return m < 60 ? `${Math.max(1, Math.round(m))}m` : m < 1440 ? `${Math.round(m / 60)}h` : m < 2880 ? 'Yesterday' : fmtDay(iso.slice(0, 10)); };
@@ -1170,7 +1187,7 @@ async function viewRecord(id, tab = 'view') {
   </div>
   ${deleted ? '' : `<div class="action-bar">
     <a class="btn" href="#/r/${id}/edit">Edit</a>
-    ${r.module === 'tasks' && !done ? `<button type="button" class="btn primary" data-action="set-status" data-id="${id}" data-v="done">Mark done</button>`
+    ${r.module === 'tasks' && !done ? `${r.data.gcalEvent?.link ? `<a class="btn" href="${esc(r.data.gcalEvent.link)}" target="_blank" rel="noopener">In Calendar ✓</a>` : `<button type="button" class="btn" data-action="task-to-cal" data-id="${id}">Add to Calendar</button>`}<button type="button" class="btn primary" data-action="set-status" data-id="${id}" data-v="done">Mark done</button>`
       : doneToggle ? `<button type="button" class="btn ${done ? '' : 'primary'}" data-action="toggle-done" data-id="${id}" data-k="${doneToggle.k}">${done ? 'Mark not done' : `Mark ${doneToggle.label.toLowerCase()}`}</button>`
       : isJournal ? '<button type="button" class="btn primary" data-action="record">New entry</button>'
       : r.module === 'travelwish' ? `<button type="button" class="btn primary" data-action="toggle-travelled" data-id="${id}">Mark travelled</button>`
@@ -1418,6 +1435,7 @@ function openQuickAdd(preset = 'tasks', text = '') {
         <input type="date" name="due" value="${esc(when.due || '')}" aria-label="Due date">
         <button type="button" class="link" data-action="clear-due">Clear</button>
       </div>
+      <label class="field check q-cal"><input type="checkbox" name="toCal"><span>Also add to Google Calendar</span></label>
       <div class="chips" role="radiogroup" aria-label="Type">
         ${QUICK.map((id) => `<label class="chip-radio"><input type="radio" name="module" value="${id}" ${id === preset ? 'checked' : ''}><span>${esc(MODULE[id].name.replace('Job applications', 'Job'))}</span></label>`).join('')}
         <a class="chip" href="#/life" data-action="close-sheet">More…</a>
@@ -1534,6 +1552,7 @@ document.addEventListener('click', async (e) => {
       const li = el.closest('li');
       if (li && !matchMedia('(prefers-reduced-motion: reduce)').matches) { li.classList.add('completing'); await new Promise((r) => setTimeout(r, 320)); }
       await db.update(id, { status: 'done', completedOn: todayStr() });
+      gtasks.completeIfLinked(id);
       toast('Done', { undo: true });
       break;
     }
@@ -1622,6 +1641,7 @@ document.addEventListener('click', async (e) => {
       const patch = { [m.status]: el.dataset.v };
       if (r.module === 'tasks' && el.dataset.v === 'done' && !r.data.completedOn) patch.completedOn = todayStr();
       await db.update(id, patch);
+      if (r.module === 'tasks' && el.dataset.v === 'done') gtasks.completeIfLinked(id);
       toast(`${m.fields.find((x) => x.k === m.status).label}: ${el.dataset.v}`, { undo: true });
       break;
     }
@@ -1678,6 +1698,33 @@ document.addEventListener('click', async (e) => {
     case 'toggle-travelled': {
       const rec = await drive.toggleTravelled(id);
       if (rec) { toast(rec.module === 'trips' ? 'Moved to Trips · travelled' : 'Moved to Places to go'); location.hash = `#/r/${rec.id}`; }
+      break;
+    }
+    case 'event-task': {
+      const cal = await gcal.cachedEvents();
+      const e = cal.events.find((x) => x.id === el.dataset.eid);
+      if (!e) break;
+      const due = e.start.slice(0, 10);
+      const dd = diffDays(parseDay(due), startOfToday());
+      await db.create('tasks', { title: e.title, due, status: dd <= 0 ? 'today' : dd <= 7 ? 'this week' : 'later', fromEvent: e.id, notes: e.link ? `Calendar: ${e.link}` : '' });
+      toast(`Task added · due ${rel(dd)}`, { undo: true });
+      break;
+    }
+    case 'task-to-cal': {
+      try {
+        await google.signIn(google.SCOPES.calendar);
+        const ev = await gcal.addTaskEvent(id);
+        toast(ev ? 'Added to Google Calendar' : 'Could not add');
+        render();
+      } catch (err) { toast(err.message || 'Calendar failed'); }
+      break;
+    }
+    case 'gtasks-sync': {
+      try {
+        const r = await gtasks.sync();
+        toast(r.added || r.completed ? `Google Tasks: ${r.added} new${r.completed ? `, ${r.completed} marked done` : ''}` : 'Google Tasks up to date');
+      } catch (err) { toast(err.message || 'Google Tasks failed'); }
+      render();
       break;
     }
     case 'gmail-ignore': await gmail.ignore(el.dataset.msg); render(); break;
@@ -1829,6 +1876,9 @@ document.addEventListener('submit', async (e) => {
       }
       const rec = await db.create(id, data);
       closeSheet();
+      if (id === 'tasks' && form.elements.toCal?.checked) {
+        try { await google.signIn(google.SCOPES.calendar); await gcal.addTaskEvent(rec.id); } catch (err) { toast(err.message || 'Calendar failed'); }
+      }
       toast(id === 'tasks' && data.due ? `Task added · due ${rel(diffDays(parseDay(data.due), startOfToday()))}` : `Added to ${m.name}`, { undo: true });
       if (!['tasks', 'journal', 'ideas'].includes(id)) go(`#/r/${rec.id}`);
     } else if (kind === 'sync') {

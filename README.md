@@ -66,12 +66,14 @@ The app reads your inbox **read-only**, right in your browser. It finds applicat
 One-time Google setup (about 10 minutes):
 
 1. Go to [console.cloud.google.com](https://console.cloud.google.com/) and create a project (e.g. "Life").
-2. APIs & Services → Library → enable **Gmail API**, **Google Calendar API** and **Google Drive API**.
-3. APIs & Services → **OAuth consent screen** → External. Fill in the app name and your email. Add the scopes `.../auth/gmail.readonly`, `.../auth/calendar.events` and `.../auth/drive.metadata.readonly` (Drive is read-only and names-only). Under **Test users**, add your Gmail address. Leave the app in *Testing*.
+2. APIs & Services → Library → enable **Gmail API**, **Google Calendar API**, **Google Drive API** and **Google Tasks API**.
+3. APIs & Services → **OAuth consent screen** → External. Fill in the app name and your email. Add the scopes `.../auth/gmail.readonly`, `.../auth/calendar.events` `.../auth/drive.metadata.readonly` (read-only, names only) and `.../auth/tasks`. Under **Test users**, add your Gmail address. Leave the app in *Testing*.
 4. APIs & Services → **Credentials** → Create credentials → **OAuth client ID** → Web application. Under *Authorized JavaScript origins*, add `https://<username>.github.io`. Create it and copy the **Client ID**.
 5. In the app: Settings → Google → paste the Client ID → Save.
    - **Gmail:** Jobs → Gmail → **Scan Gmail**.
    - **Calendar:** Settings → Google Calendar → **Connect & add existing dates**.
+   - **Calendar on Home:** the Calendar card shows the next two weeks; **+ Task** turns an event into a task; tasks have **Add to Calendar**, and quick add has "Also add to Google Calendar".
+   - **Google Tasks:** tap **Google Tasks** on the Calendar card to bring open Google Tasks into the app; finishing one in the app completes it in Google Tasks.
    - **Drive → Travel:** Home → Travel → **Import from Google Drive**. Each sub-folder of your destinations folder (default "Foreign Destinations") becomes a place; folders containing a passport, visa, ticket, boarding pass or booking are marked travelled, the rest go to Places to go. Switch any place later with **Mark travelled / Not travelled yet**.
 
 What Calendar does:

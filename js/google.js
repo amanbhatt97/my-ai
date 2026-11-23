@@ -9,6 +9,7 @@ export const SCOPES = {
   gmail: 'https://www.googleapis.com/auth/gmail.readonly',
   calendar: 'https://www.googleapis.com/auth/calendar.events',
   drive: 'https://www.googleapis.com/auth/drive.metadata.readonly',
+  tasks: 'https://www.googleapis.com/auth/tasks',
 };
 
 const KEY = 'google-token';
