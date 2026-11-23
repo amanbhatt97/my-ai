@@ -45,11 +45,11 @@ npm install
 npx wrangler login
 npx wrangler secret put APP_TOKEN          # any long random string
 npx wrangler secret put SARVAM_API_KEY     # from sarvam.ai
-npx wrangler secret put ANTHROPIC_API_KEY  # optional, for Hinglish cleanup + suggested tasks
+npx wrangler secret put ANTHROPIC_API_KEY  # for Ask, Hinglish cleanup + suggested tasks, Gmail AI
 npx wrangler deploy
 ```
 
-Then, in the app, go to Settings → Voice transcription and paste the Worker URL and the same `APP_TOKEN`.
+Then, in the app, go to Settings → Voice & assistant and paste the Worker URL and the same `APP_TOKEN`.
 
 Before relying on it:
 - Check `SARVAM_URL`, `SARVAM_MODEL`, `SARVAM_MODE` and the response field in `worker/src/index.js` against Sarvam's current docs. They were written from Sarvam's published API description and not tested against the live API.
@@ -58,6 +58,8 @@ Before relying on it:
 - Record a few real clips (work talk, family talk, names, a noisy place) and check the Hinglish quality.
 
 Privacy note: voice audio and transcripts are sent to Sarvam (and to Anthropic if cleanup is on) to be processed. Everything stored afterwards is encrypted.
+
+**Ask (the assistant).** Type a question in the top bar on Home (anything ending in "?" or starting with what/when/who/kab/kya…) and press Enter, or tap **Brief me**. The app sends your records to the Worker's `/ask` endpoint, which asks Claude and returns a short answer plus the records it used. Never sent: Emergency info, Medical records, Medicines, Health profile, Useful contacts, every "last 4 digits" field, the Home "Details / account no." field and scan links. Journal entries are capped to the latest 60 and each entry to 600 characters. Set `ASK_MODEL` in `wrangler.toml` to change the model. The record list is prompt-cached, so follow-up questions asked within a few minutes cost much less. Without the Worker, Ask falls back to plain search.
 
 ### 4. Google: Gmail and Calendar (optional)
 

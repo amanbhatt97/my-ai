@@ -2,6 +2,7 @@
 //   POST /transcribe  multipart "file" (one audio clip ≤ ~25 s) → { text }
 //   POST /cleanup     { text } → { text, mood, people, areas, tasks }
 //   POST /jobmail     { emails: [{id, from, subject, snippet, date}] } → { results }
+//   POST /ask         { question, today, records: [{id, module, title, fields}] } → { answer, sources }
 // Every request must carry the X-App-Token header matching the APP_TOKEN secret.
 
 import Anthropic from '@anthropic-ai/sdk';
@@ -147,6 +148,59 @@ async function jobmail(request, env) {
   }
 }
 
+const ASK_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['answer', 'sources'],
+  properties: {
+    answer: { type: 'string' },
+    sources: { type: 'array', items: { type: 'string' } },
+  },
+};
+
+const ASK_SYSTEM = `You are the personal assistant inside one person's private life-tracker app. You answer their questions using only the records they have stored, which are given to you below.
+
+How to answer:
+- Answer in 1–3 short sentences, plain text, no markdown headings or bullet lists unless they ask for a list. Lead with the answer itself (a date, a name, a number, yes/no).
+- Write in the language of the question: English if they ask in English, Hinglish (Hindi in Roman script mixed with English) if they ask that way.
+- Work out dates relative to "today" given in the request: say "in 9 days" or "3 days ago" alongside the date.
+- If the records don't contain the answer, say so plainly and say what they could add to the app so you can answer next time. Never guess or invent facts, names, dates or amounts.
+- When asked for a brief or a summary of their week, cover what is due or overdue, upcoming birthdays and renewals, job applications that need follow-up, and people they haven't contacted in a long time. Keep it to about 5 short lines.
+- sources: the ids of the records your answer relies on (at most 5). Empty if none.`;
+
+async function ask(request, env) {
+  const { question, today, records } = await request.json();
+  if (!question || typeof question !== 'string') return json(env, { error: 'Missing question' }, 400);
+  if (!env.ANTHROPIC_API_KEY) return json(env, { error: 'AI not configured' }, 501);
+  const data = JSON.stringify(Array.isArray(records) ? records : []);
+  if (data.length > 1_500_000) return json(env, { error: 'Too much data to send in one question' }, 413);
+  const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
+  const response = await client.beta.messages.create({
+    model: env.ASK_MODEL || env.CLEANUP_MODEL || 'claude-opus-5-5',
+    max_tokens: 16000,
+    betas: ['server-side-fallback-2026-07-01'],
+    fallbacks: 'default',
+    output_config: { effort: 'low', format: { type: 'json_schema', schema: ASK_SCHEMA } },
+    system: ASK_SYSTEM,
+    messages: [{
+      role: 'user',
+      content: [
+        // the record set is identical across questions asked in a row, so it is cached
+        { type: 'text', text: `<records>\n${data}\n</records>`, cache_control: { type: 'ephemeral' } },
+        { type: 'text', text: `Today is ${String(today || '').slice(0, 40)}.\n<question>\n${question.slice(0, 2000)}\n</question>` },
+      ],
+    }],
+  });
+  if (response.stop_reason === 'refusal') return json(env, { answer: 'I can’t answer that one.', sources: [] });
+  if (response.stop_reason === 'max_tokens') return json(env, { error: 'Answer was cut off' }, 502);
+  const block = response.content.find((b) => b.type === 'text');
+  try {
+    return json(env, JSON.parse(block.text));
+  } catch {
+    return json(env, { error: 'Bad AI response' }, 502);
+  }
+}
+
 export default {
   async fetch(request, env) {
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors(env) });
@@ -159,6 +213,7 @@ export default {
       if (pathname === '/transcribe') return await transcribe(request, env);
       if (pathname === '/cleanup') return await cleanup(request, env);
       if (pathname === '/jobmail') return await jobmail(request, env);
+      if (pathname === '/ask') return await ask(request, env);
       return json(env, { error: 'Not found' }, 404);
     } catch (e) {
       return json(env, { error: e.message || 'Server error' }, 500);

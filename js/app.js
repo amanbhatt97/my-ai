@@ -7,6 +7,7 @@ import * as drive from './drive.js';
 import * as gtasks from './gtasks.js';
 import * as autosync from './autosync.js';
 import * as google from './google.js';
+import * as assistant from './ask.js';
 import { ROOMS, ROOM, PLAN_MODULES, roomOf, colorOf, homeOf } from './rooms.js';
 import { MODULES, MODULE, GROUPS, LINK_CATEGORIES, titleOf, defaults, isDone } from './schemas.js';
 
@@ -47,6 +48,7 @@ const I = {
   now: '<path d="M12 3v3M12 18v3M3 12h3M18 12h3"/><circle cx="12" cy="12" r="4"/>',
   plan: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="0.5"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
+  spark: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 16l.7 1.8 1.8.7-1.8.7L19 21l-.7-1.8-1.8-.7 1.8-.7z"/>',
   mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>',
   journal: '<path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z"/><path d="M5 17a3 3 0 0 1 3-3h11"/>',
   life: '<rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/>',
@@ -267,9 +269,7 @@ const isWide = () => matchMedia('(min-width: 1000px)').matches;
 // On laptops a room or list sits on the left and the chosen item on the right.
 function splitFor({ name, parts }) {
   if (!isWide()) return null;
-  const placeholder = async () => `<div class="pane-empty"><p>Select something on the left to see it here.</p></div>`;
-  // rooms are dashboards: on a wide screen they use the full width (two columns), not a split
-  if (name === 'm' && MODULE[parts[0]]) return { left: () => viewModule(parts[0], parts[1] || ''), right: placeholder };
+  // rooms and lists use the full width; two panes only once an item is open, so there is never an empty pane
   if (name === 'r' && !parts[1]) {
     const r = db.get(parts[0]);
     if (!r || !MODULE[r.module]) return null;
@@ -521,7 +521,7 @@ async function viewNow() {
     <h1>${headline}</h1>
   </header>
   <form class="capture" data-form="capture" role="search">
-    ${icon('search', 16)}<input name="q" type="text" placeholder="Search or add anything" aria-label="Search or add anything" autocomplete="off">
+    ${icon('search', 16)}<input name="q" type="text" placeholder="Ask, search or add anything" aria-label="Ask, search or add anything" autocomplete="off">
     <button type="button" class="mic" data-action="record" aria-label="Speak">${icon('mic', 18)}</button>
   </form>
   <div id="capture-results" class="capture-results" hidden></div>
@@ -549,7 +549,7 @@ async function viewNow() {
   </section>
 
   <nav class="home-links" aria-label="More">
-    <a href="#/plan">Plan</a><a href="#/journal">Journal</a><a href="#/progress">Progress</a><a href="#/setup">Set up</a><a href="#/settings">Settings</a>
+    <button type="button" class="link" data-action="ask-brief">Brief me</button><a href="#/plan">Plan</a><a href="#/journal">Journal</a><a href="#/progress">Progress</a><a href="#/setup">Set up</a><a href="#/settings">Settings</a>
   </nav>`;
 }
 
@@ -1270,13 +1270,10 @@ function inlineAdd(m) {
 }
 
 function startCard(m) {
+  // the inline "Add …" box and the New button already cover adding; this just explains what goes here
   return `<section class="block start">
-    <span class="label">Start here</span>
-    <p class="start-text">${esc(HINTS[m.id] || `Nothing in ${m.name} yet.`)}</p>
-    <div class="form-actions">
-      ${m.id === 'links' ? '<button type="button" class="btn primary" data-action="starter-links">Add starter links</button>' : ''}
-      <a class="btn ${m.id === 'links' ? 'ghost' : 'primary'}" href="#/new/${m.id}">+ Add ${esc(m.name.toLowerCase().replace(/s$/, ''))}</a>
-    </div>
+    <p class="start-text muted">${esc(HINTS[m.id] || `Nothing in ${m.name} yet.`)}</p>
+    ${m.id === 'links' ? '<div class="form-actions"><button type="button" class="btn primary" data-action="starter-links">Add starter links</button></div>' : ''}
   </section>`;
 }
 
@@ -1660,8 +1657,8 @@ async function viewSettings() {
   </section>
 
   <section class="block">
-    <span class="label">Voice transcription</span>
-    <p class="small muted">Your Cloudflare Worker address (see the README). Without it, voice notes are still saved; they just stay as audio.</p>
+    <span class="label">Voice &amp; assistant</span>
+    <p class="small muted">Your Cloudflare Worker address (see the README). It turns voice notes into text and powers Ask. When you ask something, your records go to Claude through it to be answered, except Emergency info, medical records, medicines, health profile, useful contacts and all account, policy and document numbers, which never leave this device.</p>
     <form class="form" data-form="voice">
       <div class="field"><label for="v-url">Worker URL</label><input id="v-url" name="url" type="url" value="${esc(voice.url || '')}" placeholder="https://life-voice.yourname.workers.dev"></div>
       <div class="field"><label for="v-token">App token</label><input id="v-token" name="token" type="password" value="${esc(voice.token || '')}" autocomplete="off"></div>
@@ -1797,6 +1794,47 @@ function openPeek(id) {
     </div>
   </div>`;
   sheet.classList.add('open');
+}
+
+// ── Ask: the assistant sheet ────────────────────────────────────────────
+const BRIEF_Q = 'Give me my brief for this week: what is due or overdue, birthdays and renewals coming up, job applications that need a follow-up, and anyone I have not talked to in a long time.';
+let askSeq = 0;
+async function openAsk(question) {
+  const q = question.trim();
+  if (!q) return;
+  const sheet = $('#sheet');
+  const shown = q === BRIEF_Q ? 'Brief me on this week' : q;
+  const seq = ++askSeq;
+  sheet.innerHTML = `<div class="sheet-card ask" role="dialog" aria-modal="true" aria-label="Ask">
+    <div class="grab"></div>
+    <p class="ask-q">${esc(shown)}</p>
+    <div class="ask-a" aria-live="polite"><span class="ask-dots"><i></i><i></i><i></i></span></div>
+    <div class="ask-src"></div>
+    <form data-form="ask" class="ask-form"><input name="q" type="text" placeholder="Ask something else" aria-label="Ask something else" autocomplete="off"><button type="submit" class="icon-btn" aria-label="Ask">${icon('chev', 18)}</button></form>
+    ${q === BRIEF_Q ? '' : '<button type="button" class="link ask-brief" data-action="ask-brief">Brief me on this week</button>'}
+  </div>`;
+  sheet.classList.add('open');
+  const aEl = sheet.querySelector('.ask-a');
+  const sEl = sheet.querySelector('.ask-src');
+  try {
+    const { answer, sources } = await assistant.ask(q);
+    if (seq !== askSeq) return;
+    aEl.innerHTML = esc(answer).replace(/\n/g, '<br>');
+    if (sources.length) sEl.innerHTML = `<div class="list">${sources.map((id) => row(db.get(id), { showModule: true })).join('')}</div>`;
+  } catch (err) {
+    if (seq !== askSeq) return;
+    // no assistant (or offline): fall back to what plain search can find
+    const words = q.toLowerCase().replace(/[?]/g, '').split(/\W+/).filter((w) => w.length >= 3 && !/^(what|when|where|which|does|have|kya|kab|kaun|kahan|mera|meri|mere|the|and|for|this|that|with|from|about|tell|show)$/.test(w));
+    const hits = db.all().filter((r) => MODULE[r.module]).map((r) => {
+      const hay = (titleOf(r) + ' ' + JSON.stringify(r.data)).toLowerCase();
+      return [words.filter((w) => hay.includes(w)).length, r];
+    }).filter(([n]) => n).sort((a, b) => b[0] - a[0]).slice(0, 5).map(([, r]) => r);
+    const why = err.code === 'not-configured'
+      ? `The assistant isn’t switched on yet. Add your Worker in <a href="#/settings" data-action="close-sheet">Settings → Voice &amp; assistant</a>.`
+      : navigator.onLine === false ? 'You’re offline, so I can only search.' : `The assistant didn’t answer (${esc(err.message)}).`;
+    aEl.innerHTML = `<span class="muted">${why}${hits.length ? ' Closest matches:' : ''}</span>`;
+    if (hits.length) sEl.innerHTML = `<div class="list">${hits.map((r) => row(r, { showModule: true })).join('')}</div>`;
+  }
 }
 
 function closeSheet() { const s = $('#sheet'); s.classList.remove('open'); s.innerHTML = ''; }
@@ -1988,6 +2026,12 @@ document.addEventListener('click', async (e) => {
       toast('Updated', { undo: true });
       break;
     }
+    case 'ask-brief': openAsk(BRIEF_Q); break;
+    case 'capture-ask': {
+      const inp = document.querySelector('form.capture input');
+      if (inp && inp.value.trim()) openAsk(inp.value.trim());
+      break;
+    }
     case 'capture-add': {
       const inp = document.querySelector('form.capture input');
       if (inp && inp.value.trim()) openQuickAdd('tasks', inp.value.trim());
@@ -2152,7 +2196,8 @@ document.addEventListener('input', (e) => {
     };
     const hits = db.all().filter((r) => MODULE[r.module]).map((r) => [score(r), r]).filter(([n]) => n).sort((a, b) => b[0] - a[0]).slice(0, 5).map(([, r]) => r);
     box.hidden = false;
-    box.innerHTML = `<button type="button" class="cr-add" data-action="capture-add">${icon('plus', 16)}<span>Add “${esc(when.title)}”${when.due ? ` <em>· due ${esc(rel(when.days))}</em>` : ''}</span><kbd>Enter</kbd></button>${hits.map((r) => row(r, { showModule: true })).join('')}`;
+    const asking = assistant.isQuestion(q);
+    box.innerHTML = `${asking ? `<button type="button" class="cr-add cr-ask" data-action="capture-ask">${icon('spark', 16)}<span>Ask “${esc(q)}”</span><kbd>Enter</kbd></button>` : ''}<button type="button" class="cr-add" data-action="capture-add">${icon('plus', 16)}<span>Add “${esc(when.title)}”${when.due ? ` <em>· due ${esc(rel(when.days))}</em>` : ''}</span>${asking ? '' : '<kbd>Enter</kbd>'}</button>${hits.map((r) => row(r, { showModule: true })).join('')}`;
   }
 });
 
@@ -2184,7 +2229,11 @@ document.addEventListener('submit', async (e) => {
       if (!q) return;
       // "?something" or a match in your data → search; otherwise add it
       if (q.startsWith('?')) { location.hash = '#/search'; setTimeout(() => { const i = $('#global-q'); if (i) { i.value = q.slice(1).trim(); i.dispatchEvent(new Event('input', { bubbles: true })); } }, 60); return; }
+      if (assistant.isQuestion(q)) { openAsk(q); return; }
       openQuickAdd('tasks', q);
+    } else if (kind === 'ask') {
+      const q = form.elements.q.value.trim();
+      if (q) openAsk(q);
     } else if (kind === 'inline-add') {
       const raw = form.elements.t.value.trim();
       if (!raw) return;
@@ -2310,9 +2359,16 @@ document.addEventListener('keydown', (e) => {
 
 // ── boot ────────────────────────────────────────────────────────────────
 let renderQueued = false;
+let renderAfterTyping = false;
+document.addEventListener('focusout', (e) => {
+  if (renderAfterTyping && e.target.matches?.('form.capture input')) setTimeout(() => { if (renderAfterTyping && !document.activeElement?.matches?.('form.capture input')) { renderAfterTyping = false; queueRender(); } }, 250);
+});
 function queueRender(info) {
   // don't wipe a form the user is typing in
   if (formDirty) return;
+  // don't wipe the top bar while someone is typing in it (a background sync can land mid-sentence)
+  const typing = document.activeElement?.matches?.('form.capture input') && document.activeElement.value.trim();
+  if (typing) { renderAfterTyping = true; return; }
   if (['settings', 'new', 'search', 'inbox', 'review', 'drive-travel'].includes(currentRoute.name)) return;
   if (currentRoute.name === 'r' && info?.rec && info.rec.id !== currentRoute.parts[0]) return;
   if (renderQueued) return;
