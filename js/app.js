@@ -268,14 +268,8 @@ let lastDepth = 0;
 let wasSplit = false;
 const isWide = () => matchMedia('(min-width: 1000px)').matches;
 // On laptops a room or list sits on the left and the chosen item on the right.
-function splitFor({ name, parts }) {
-  if (!isWide()) return null;
-  // rooms and lists use the full width; two panes only once an item is open, so there is never an empty pane
-  if (name === 'r' && !parts[1]) {
-    const r = db.get(parts[0]);
-    if (!r || !MODULE[r.module]) return null;
-    return { left: () => viewModule(r.module), right: () => viewRecord(parts[0]) };
-  }
+function splitFor() {
+  // no two-pane view: lists use the full width, and an item opens in a side panel (laptop) or bottom card (phone)
   return null;
 }
 function routeDepth({ name, parts }) {
@@ -1614,7 +1608,7 @@ async function mergeJobs(srcId, dstId) {
 function openMerge(id) {
   const r = db.get(id);
   const others = db.list('jobs').filter((j) => j.id !== id).sort((a, b) => titleOf(a).localeCompare(titleOf(b)));
-  const sheet = $('#sheet');
+  const sheet = $('#sheet'); sheet.classList.remove('is-peek');
   sheet.innerHTML = `<div class="sheet-card" role="dialog" aria-modal="true" aria-label="Merge application">
     <div class="grab"></div>
     <span class="label">Merge “${esc(titleOf(r))}” into…</span>
@@ -1800,7 +1794,7 @@ function parseWhen(text) {
 }
 
 function openQuickAdd(preset = 'tasks', text = '') {
-  const sheet = $('#sheet');
+  const sheet = $('#sheet'); sheet.classList.remove('is-peek');
   const when = text ? parseWhen(text) : { title: '', due: '' };
   if (when.due) text = when.title;
   sheet.innerHTML = `<div class="sheet-card" role="dialog" aria-modal="true" aria-label="Quick add">
@@ -1832,7 +1826,7 @@ function openRenew(id, k) {
   if (!r) return;
   const fd = MODULE[r.module].fields.find((x) => x.k === k);
   const cur = r.data[k];
-  const sheet = $('#sheet');
+  const sheet = $('#sheet'); sheet.classList.remove('is-peek');
   sheet.innerHTML = `<div class="sheet-card" role="dialog" aria-modal="true" aria-label="Update ${esc(fd.label)}">
     <div class="grab"></div>
     <span class="label">${esc(titleOf(r))}</span>
@@ -1860,7 +1854,8 @@ function openPeek(id) {
   const done = isDone(r);
   const doneToggle = m.fields.find((x) => x.type === 'check' && ['done', 'settled'].includes(x.k));
   const title = r.module === 'journal' ? `${fmtDay(r.data.at)} · ${fmtTime(r.data.at)}` : titleOf(r);
-  const sheet = $('#sheet');
+  const sheet = $('#sheet'); sheet.classList.remove('is-peek');
+  sheet.classList.add('is-peek');
   sheet.innerHTML = `<div class="sheet-card peek" role="dialog" aria-modal="true" aria-label="${esc(title)}" style="--c:${colorOf(r.module)}">
     <div class="grab"></div>
     <div class="peek-head"><span class="kicker"><span class="dot" style="--c:${colorOf(r.module)}"></span>${esc(m.name)}</span><a class="link" href="#/r/${id}" data-action="close-sheet">Open ›</a></div>
@@ -1889,7 +1884,7 @@ let askSeq = 0;
 async function openAsk(question) {
   const q = question.trim();
   if (!q) return;
-  const sheet = $('#sheet');
+  const sheet = $('#sheet'); sheet.classList.remove('is-peek');
   const shown = q === BRIEF_Q ? 'Brief me on this week' : q;
   const seq = ++askSeq;
   sheet.innerHTML = `<div class="sheet-card ask" role="dialog" aria-modal="true" aria-label="Ask">
@@ -1924,7 +1919,7 @@ async function openAsk(question) {
   }
 }
 
-function closeSheet() { const s = $('#sheet'); s.classList.remove('open'); s.innerHTML = ''; }
+function closeSheet() { const s = $('#sheet'); s.classList.remove('open', 'is-peek'); s.innerHTML = ''; }
 
 // ── recorder sheet ──────────────────────────────────────────────────────
 let recorder = null;
@@ -1932,7 +1927,7 @@ let recTick = null;
 async function openRecorder() {
   closeSheet();
   if (!Recorder.supported()) { toast('This browser cannot record audio.'); return; }
-  const sheet = $('#sheet');
+  const sheet = $('#sheet'); sheet.classList.remove('is-peek');
   sheet.innerHTML = `<div class="sheet-card center" role="dialog" aria-modal="true" aria-label="Recording">
     <div class="grab"></div>
     <span class="label">Recording</span>
@@ -1981,7 +1976,7 @@ async function stopRecorder(save) {
 // ── events ──────────────────────────────────────────────────────────────
 document.addEventListener('click', async (e) => {
   const peekLink = !e.metaKey && !e.ctrlKey && !e.shiftKey && e.target.closest('a.row[href^="#/r/"], .attn a[href^="#/r/"], .tl a.what[href^="#/r/"], .simple a[href^="#/r/"]');
-  if (peekLink && !isWide() && !e.target.closest('#sheet') && !e.target.closest('[data-action]')) {
+  if (peekLink && !e.target.closest('#sheet') && !e.target.closest('[data-action]')) {
     e.preventDefault();
     openPeek(peekLink.getAttribute('href').split('/')[2]);
     return;

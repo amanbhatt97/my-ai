@@ -1007,3 +1007,19 @@ main.enter-fwd, main.enter-back, main.enter-same { animation: in-same 0.18s ease
   .home-grid { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 28px; align-items: start; }
   .home-rail { position: sticky; top: calc(var(--bar-h) + 24px); }
 }
+
+/* item side panel on laptop (replaces the two-pane view) */
+@media (min-width: 1000px) {
+  .sheet.is-peek { align-items: stretch; justify-content: flex-end; background: rgba(5, 6, 10, 0.28); backdrop-filter: none; }
+  .sheet.is-peek .sheet-card.peek {
+    max-width: 480px; width: 480px; max-height: none; height: calc(100vh - var(--bar-h) - env(safe-area-inset-top));
+    margin-top: calc(var(--bar-h) + env(safe-area-inset-top)); border-radius: 0; border: 0; border-left: 1px solid var(--line-2);
+    border-top: 3px solid var(--c); padding: 20px 24px 24px; overflow-y: auto; animation: peekIn 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+    box-shadow: -24px 0 60px -30px rgba(0, 0, 0, 0.5);
+  }
+  .sheet.is-peek .grab { display: none; }
+  .sheet.is-peek .sheet-title { font-size: 24px; line-height: 1.2; }
+}
+@keyframes peekIn { from { transform: translateX(40px); opacity: 0; } }
+.item-head .top h1 { font-size: clamp(26px, 6vw, 34px); }
+.peek .chips, .peek .form-actions { justify-content: flex-start; }
