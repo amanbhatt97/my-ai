@@ -4,6 +4,8 @@
 // Field types: text, long, number, money, date, datetime, select, tags, url,
 // links, check, rating, ref, secret4 (last 4 digits only)
 // remind: N  → show in "Heads up" N days before this date (and when overdue)
+// upcomingOnly → a past date means it happened (trip, course end), never "overdue"
+// maxOverdue: N → stop nagging N days after the date (default 365)
 
 const f = (k, label, type = 'text', extra = {}) => ({ k, label, type, ...extra });
 const AREAS = ['personal', 'office', 'career', 'health', 'money', 'people', 'learning', 'home', 'travel'];
@@ -93,7 +95,7 @@ export const MODULES = [
       area, f('parent', 'Part of', 'ref', { ref: 'goals' }),
       f('progress', 'Progress %', 'number'),
       f('status', 'Status', 'select', { options: ['active', 'achieved', 'dropped', 'paused'], def: 'active' }),
-      f('due', 'Target date', 'date', { remind: 14 }), f('why', 'Why it matters', 'long'), notes,
+      f('due', 'Target date', 'date', { remind: 14, maxOverdue: 30 }), f('why', 'Why it matters', 'long'), notes,
     ],
   },
   {
@@ -164,7 +166,7 @@ export const MODULES = [
   },
   {
     id: 'courses', name: 'Courses & certificates', group: 'Learning', title: 'title', status: 'status',
-    fields: [f('title', 'Course', 'text', { req: true }), f('provider', 'Provider', 'text'), f('status', 'Status', 'select', { options: ['planned', 'doing', 'done'], def: 'planned' }), f('certificate', 'Certificate link', 'url'), f('expires', 'Certificate expires', 'date', { remind: 60 }), notes],
+    fields: [f('title', 'Course', 'text', { req: true }), f('provider', 'Provider', 'text'), f('status', 'Status', 'select', { options: ['planned', 'doing', 'done'], def: 'planned' }), f('certificate', 'Certificate link', 'url'), f('expires', 'Certificate expires', 'date', { remind: 60, maxOverdue: 60 }), notes],
   },
   {
     id: 'skills', name: 'Skills', group: 'Learning', title: 'skill',
@@ -182,11 +184,11 @@ export const MODULES = [
   },
   {
     id: 'medical', name: 'Medical records', group: 'Health', title: 'title', sort: 'date',
-    fields: [f('title', 'Visit / test', 'text', { req: true }), f('date', 'Date', 'date'), f('doctor', 'Doctor / lab', 'text'), f('summary', 'Summary', 'long'), scan, f('followUp', 'Follow-up date', 'date', { remind: 3 })],
+    fields: [f('title', 'Visit / test', 'text', { req: true }), f('date', 'Date', 'date'), f('doctor', 'Doctor / lab', 'text'), f('summary', 'Summary', 'long'), scan, f('followUp', 'Follow-up date', 'date', { remind: 3, maxOverdue: 60 })],
   },
   {
     id: 'medicines', name: 'Medicines', group: 'Health', title: 'name',
-    fields: [f('name', 'Medicine', 'text', { req: true }), f('dose', 'Dose & timing', 'text'), f('for', 'For', 'text'), f('until', 'Until', 'date', { remind: 3 }), f('refill', 'Refill by', 'date', { remind: 3 })],
+    fields: [f('name', 'Medicine', 'text', { req: true }), f('dose', 'Dose & timing', 'text'), f('for', 'For', 'text'), f('until', 'Until', 'date', { remind: 3, upcomingOnly: true }), f('refill', 'Refill by', 'date', { remind: 3 })],
   },
   {
     id: 'healthprofile', name: 'Health profile', group: 'Health', title: 'item',
@@ -242,7 +244,7 @@ export const MODULES = [
   },
   {
     id: 'possessions', name: 'Things I own', group: 'Own', title: 'name',
-    fields: [f('name', 'Item', 'text', { req: true }), f('kind', 'Type', 'select', { options: ['phone', 'laptop', 'appliance', 'furniture', 'jewellery', 'watch', 'other'] }), f('bought', 'Bought on', 'date'), f('price', 'Price', 'money'), f('warranty', 'Warranty ends', 'date', { remind: 30 }), f('serial', 'Serial no.', 'text'), f('invoice', 'Invoice link', 'url'), f('keptWhere', 'Kept where', 'text'), notes],
+    fields: [f('name', 'Item', 'text', { req: true }), f('kind', 'Type', 'select', { options: ['phone', 'laptop', 'appliance', 'furniture', 'jewellery', 'watch', 'other'] }), f('bought', 'Bought on', 'date'), f('price', 'Price', 'money'), f('warranty', 'Warranty ends', 'date', { remind: 30, maxOverdue: 30 }), f('serial', 'Serial no.', 'text'), f('invoice', 'Invoice link', 'url'), f('keptWhere', 'Kept where', 'text'), notes],
   },
   {
     id: 'documents', name: 'Documents & IDs', group: 'Own', title: 'name',
@@ -273,7 +275,7 @@ export const MODULES = [
   // ── Travel ──────────────────────────────────────────────────────────
   {
     id: 'trips', name: 'Trips', group: 'Travel', title: 'place', sort: 'from',
-    fields: [f('place', 'Place', 'text', { req: true }), f('country', 'Country', 'text'), f('from', 'From', 'date', { remind: 7 }), f('to', 'To', 'date'), f('with', 'With', 'tags'), f('cost', 'Total cost', 'money'), f('album', 'Photo album', 'url'), f('highlights', 'Highlights', 'long'), links, f('driveId', 'Drive folder id', 'text', { hidden: true })],
+    fields: [f('place', 'Place', 'text', { req: true }), f('country', 'Country', 'text'), f('from', 'Trip starts', 'date', { remind: 7, upcomingOnly: true }), f('to', 'Trip ends', 'date'), f('with', 'With', 'tags'), f('cost', 'Total cost', 'money'), f('album', 'Photo album', 'url'), f('highlights', 'Highlights', 'long'), links, f('driveId', 'Drive folder id', 'text', { hidden: true })],
   },
   {
     id: 'travelwish', name: 'Places to go', group: 'Travel', title: 'place',

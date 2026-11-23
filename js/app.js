@@ -151,6 +151,7 @@ function reminders() {
           if (d < t0) d.setFullYear(d.getFullYear() + 1);
         }
         const days = diffDays(d, t0);
+        if (!dateStillRelevant(fd, days)) continue;
         if (days <= fd.remind) out.push({ r, m, label: fd.label, days });
       }
     }
@@ -164,6 +165,13 @@ function reminders() {
     if (days <= 0) out.push({ r, m: MODULE.people, label: 'Reach out', days });
   }
   return out.sort((a, b) => a.days - b.days);
+}
+
+// A past date is only "overdue" for things that expire or are due.
+function dateStillRelevant(fd, days) {
+  if (days >= 0) return true;
+  if (fd.upcomingOnly) return false;
+  return -days <= (fd.maxOverdue ?? 365);
 }
 
 // ── router ──────────────────────────────────────────────────────────────
@@ -183,15 +191,28 @@ const VIEWS = {
   links: viewLinks, setup: viewSetup, progress: viewProgress, inbox: viewInbox, t: viewLife, room: viewRoom, review: viewReview, 'drive-travel': viewDriveTravel,
 };
 
+let renderSeq = 0;
+let refocusInline = '';
 async function render() {
+  const seq = ++renderSeq;
   currentRoute = parseRoute();
   formDirty = false;
   currentBack = backFor(currentRoute);
   const view = VIEWS[currentRoute.name] || viewNow;
   const main = $('#main');
-  const html = await view(...currentRoute.parts);
-  const depth = routeDepth(currentRoute);
-  const dir = depth > lastDepth ? 'fwd' : depth < lastDepth ? 'back' : 'same';
+  const split = splitFor(currentRoute);
+  let html;
+  if (split) {
+    const [left, right] = await Promise.all([split.left(), split.right()]);
+    html = `<div class="split"><div class="pane-list">${left}</div><div class="pane-detail" id="pane-detail">${right}</div></div>`;
+  } else {
+    html = await view(...currentRoute.parts);
+  }
+  if (seq !== renderSeq) return; // a newer render started while this one was loading
+  main.classList.toggle('is-split', !!split);
+  const depth = split ? 1 : routeDepth(currentRoute);
+  const dir = split && wasSplit ? 'same' : depth > lastDepth ? 'fwd' : depth < lastDepth ? 'back' : 'same';
+  wasSplit = !!split;
   lastDepth = depth;
   main.innerHTML = html;
   main.classList.remove('enter-fwd', 'enter-back', 'enter-same');
@@ -203,6 +224,11 @@ async function render() {
   const top = tabFor(currentRoute);
   for (const a of document.querySelectorAll('.nav a, .side a[data-nav]')) a.classList.toggle('on', a.dataset.nav === top);
   renderSide();
+  if (refocusInline) { document.querySelector(`form.inline-add[data-module="${refocusInline}"] input`)?.focus({ preventScroll: true }); refocusInline = ''; }
+  document.querySelector('.room-switch a.on')?.scrollIntoView({ inline: 'center', block: 'nearest' });
+  if (split && currentRoute.name === 'r') {
+    for (const a of document.querySelectorAll('.pane-list a[href="#/r/' + currentRoute.parts[0] + '"]')) a.classList.add('sel');
+  }
   hydrate();
 }
 
@@ -220,6 +246,22 @@ async function hydrate() {
 // ── shared pieces ───────────────────────────────────────────────────────
 let currentBack = null;
 let lastDepth = 0;
+let wasSplit = false;
+const isWide = () => matchMedia('(min-width: 1000px)').matches;
+// On laptops a room or list sits on the left and the chosen item on the right.
+function splitFor({ name, parts }) {
+  if (!isWide()) return null;
+  const placeholder = async () => `<div class="pane-empty"><p>Select something on the left to see it here.</p></div>`;
+  if (name === 'room' && ROOM[parts[0]]) return { left: () => viewRoom(parts[0]), right: placeholder };
+  if (name === 'm' && MODULE[parts[0]]) return { left: () => viewModule(parts[0], parts[1] || ''), right: placeholder };
+  if (name === 'r' && !parts[1]) {
+    const r = db.get(parts[0]);
+    if (!r || !MODULE[r.module]) return null;
+    const room = roomOf(r.module);
+    return { left: () => (room ? viewRoom(room.id) : viewModule(r.module)), right: () => viewRecord(parts[0]) };
+  }
+  return null;
+}
 function routeDepth({ name, parts }) {
   if (['now', 'plan', 'search', 'life'].includes(name)) return 0;
   if (name === 'room') return 1;
@@ -237,6 +279,7 @@ function updateTopbar() {
   const back = currentBack;
   bar.innerHTML = `${back ? `<a class="tb-back" href="${esc(back.href)}" aria-label="Back to ${esc(back.name)}">${icon('back', 18)}</a>` : '<span class="tb-back"></span>'}<span class="tb-title">${esc(currentRoute.name === 'now' ? 'Home' : title)}</span><span class="tb-back"></span>`;
 }
+matchMedia('(min-width: 1000px)').addEventListener('change', () => render());
 window.addEventListener('scroll', () => {
   document.body.classList.toggle('scrolled', window.scrollY > 90);
 }, { passive: true });
@@ -245,6 +288,22 @@ let swipe = null;
 window.addEventListener('touchstart', (e) => {
   const t = e.touches[0];
   swipe = t.clientX < 28 && currentBack && !$('#sheet').classList.contains('open') ? { x: t.clientX, y: t.clientY } : null;
+}, { passive: true });
+// swipe left/right on a room to move to the next or previous room
+let roomSwipe = null;
+window.addEventListener('touchstart', (e) => {
+  const t = e.touches[0];
+  roomSwipe = currentRoute.name === 'room' && t.clientX > 28 && !$('#sheet').classList.contains('open') && !e.target.closest?.('.room-switch') ? { x: t.clientX, y: t.clientY } : null;
+}, { passive: true });
+window.addEventListener('touchend', (e) => {
+  if (!roomSwipe) return;
+  const t = e.changedTouches[0];
+  const dx = t.clientX - roomSwipe.x; const dy = Math.abs(t.clientY - roomSwipe.y);
+  roomSwipe = null;
+  if (Math.abs(dx) < 70 || dy > 50) return;
+  const i = ROOMS.findIndex((r) => r.id === currentRoute.parts[0]);
+  const next = ROOMS[(i + (dx < 0 ? 1 : -1) + ROOMS.length) % ROOMS.length];
+  location.hash = `#/room/${next.id}`;
 }, { passive: true });
 window.addEventListener('touchend', (e) => {
   if (!swipe) return;
@@ -325,7 +384,7 @@ function countdownsOf(r) {
     let d = parseDay(r.data[fd.k]);
     if (fd.yearly) { d = new Date(t0.getFullYear(), d.getMonth(), d.getDate()); if (d < t0) d.setFullYear(d.getFullYear() + 1); }
     return { fd, days: diffDays(d, t0) };
-  }).sort((a, b) => a.days - b.days);
+  }).filter(({ fd, days }) => dateStillRelevant(fd, days)).sort((a, b) => a.days - b.days);
 }
 
 const SUB_SKIP = new Set(['long', 'links', 'json', 'url', 'check', 'rating']);
@@ -975,7 +1034,8 @@ async function viewRoom(id) {
   const room = ROOM[id];
   if (!room) return emptyState('Unknown room.', '#/life', 'Back to Life');
   const attn = roomReminders(room).filter((x) => x.days <= Math.max(x.r ? 30 : 0, 30)).slice(0, 4);
-  return `<div class="room-head" style="--c:${room.color}">
+  return `<nav class="room-switch" aria-label="Rooms">${ROOMS.map((x) => `<a href="#/room/${x.id}" class="${x.id === id ? 'on' : ''}" style="--c:${x.color}" ${x.id === id ? 'aria-current="page"' : ''}><span class="dot" style="--c:${x.color}"></span>${esc(x.name)}</a>`).join('')}</nav>
+  <div class="room-head" style="--c:${room.color}">
     ${header(room.name, { back: { name: 'Home', href: '#/now' } })}
     <div class="kpis">${roomKpis(room).map(([k, v]) => `<div class="kpi"><span>${esc(k)}</span><b>${esc(String(v))}</b></div>`).join('')}</div>
   </div>
@@ -989,10 +1049,11 @@ async function viewRoom(id) {
     const n = db.list(m).length;
     return `<section class="block coll"><div class="coll-head"><a href="${collectionHref(m)}" class="coll-name">${esc(MODULE[m].name)} <span>${n}</span></a><span class="coll-actions"><a class="icon-btn sm" href="#/new/${m}" aria-label="Add to ${esc(MODULE[m].name)}">${icon('plus', 16)}</a></span></div>
       <div class="list">${list.map((r) => row(r)).join('')}</div>
+      ${m === 'journal' || m === 'links' ? '' : inlineAdd(MODULE[m])}
       ${n > 3 ? `<a class="see-all" href="${collectionHref(m)}">See all ${n} ›</a>` : ''}</section>`;
   }).join('')}
   ${room.modules.some((m) => !db.list(m).length) || (room.extra || []).length ? `<section class="block"><span class="label">Add to ${esc(room.name)}</span><div class="chips">
-    ${room.modules.filter((m) => !db.list(m).length).map((m) => `<a class="chip" href="${m === 'journal' ? '#/journal' : `#/new/${m}`}">+ ${esc(MODULE[m].name)}</a>`).join('')}
+    ${room.modules.filter((m) => !db.list(m).length).map((m) => `<a class="chip" href="${collectionHref(m)}">+ ${esc(MODULE[m].name)}</a>`).join('')}
     ${(room.extra || []).map((e) => `<a class="chip" href="${esc(e.href)}">${esc(e.name)}</a>`).join('')}
   </div></section>` : ''}`;
 }
@@ -1042,6 +1103,15 @@ const HINTS = {
   emergency: 'Emergency contacts, blood group, what to do if you are hospitalised.',
 };
 
+// One line, Enter, saved. Details can be added later.
+function inlineAdd(m) {
+  const tk = titleKey(m);
+  const label = (m.fields.find((x) => x.k === tk)?.label || 'item').toLowerCase();
+  return `<form class="inline-add" data-form="inline-add" data-module="${m.id}" autocomplete="off">
+    ${icon('plus', 16)}<input name="t" type="text" placeholder="Add ${esc(label)}…" aria-label="Add ${esc(label)}" enterkeyhint="done">
+  </form>`;
+}
+
 function startCard(m) {
   return `<section class="block start">
     <span class="label">Start here</span>
@@ -1067,6 +1137,7 @@ async function viewModule(id, filter = '') {
     <a href="#/m/${id}" class="chip ${!filter ? 'on' : ''}">all</a>
     ${statusField.options.filter((o) => counts[o]).map((o) => `<a href="#/m/${id}/${encodeURIComponent(o)}" class="chip ${filter === o ? 'on' : ''}">${esc(o)} · ${counts[o]}</a>`).join('')}
   </nav>` : ''}
+  ${inlineAdd(m)}
   ${db.list(id).length ? `<div class="list" id="list">${listHtml(m, filter, '')}</div>` : startCard(m)}`;
 }
 
@@ -1226,7 +1297,7 @@ async function viewRecord(id, tab = 'view') {
     let d = parseDay(r.data[fd.k]);
     if (fd.yearly) { d = new Date(t0.getFullYear(), d.getMonth(), d.getDate()); if (d < t0) d.setFullYear(d.getFullYear() + 1); }
     return { fd, days: diffDays(d, t0) };
-  }).sort((a, b) => a.days - b.days);
+  }).filter(({ fd, days }) => dateStillRelevant(fd, days)).sort((a, b) => a.days - b.days);
   const done = isDone(r);
   const doneToggle = m.fields.find((x) => x.type === 'check' && ['done', 'settled'].includes(x.k));
 
@@ -1629,7 +1700,7 @@ async function stopRecorder(save) {
 // ── events ──────────────────────────────────────────────────────────────
 document.addEventListener('click', async (e) => {
   const peekLink = !e.metaKey && !e.ctrlKey && !e.shiftKey && e.target.closest('a.row[href^="#/r/"], .attn a[href^="#/r/"], .tl a.what[href^="#/r/"], .simple a[href^="#/r/"]');
-  if (peekLink && !e.target.closest('#sheet') && !e.target.closest('[data-action]')) {
+  if (peekLink && !isWide() && !e.target.closest('#sheet') && !e.target.closest('[data-action]')) {
     e.preventDefault();
     openPeek(peekLink.getAttribute('href').split('/')[2]);
     return;
@@ -1936,6 +2007,23 @@ document.addEventListener('submit', async (e) => {
       // "?something" or a match in your data → search; otherwise add it
       if (q.startsWith('?')) { location.hash = '#/search'; setTimeout(() => { const i = $('#global-q'); if (i) { i.value = q.slice(1).trim(); i.dispatchEvent(new Event('input', { bubbles: true })); } }, 60); return; }
       openQuickAdd('tasks', q);
+    } else if (kind === 'inline-add') {
+      const raw = form.elements.t.value.trim();
+      if (!raw) return;
+      const m = MODULE[form.dataset.module];
+      const data = { ...defaults(m.id) };
+      let text = raw;
+      if (m.id === 'tasks') {
+        const w = parseWhen(raw);
+        if (w.due) { text = w.title; data.due = w.due; data.status = w.days <= 0 ? 'today' : w.days <= 7 ? 'this week' : 'later'; }
+      }
+      if (m.id === 'journal') Object.assign(data, { at: localStamp(), text, status: 'typed' });
+      else data[titleKey(m)] = text;
+      if (m.id === 'jobs' && !data.status) data.status = 'to apply';
+      await db.create(m.id, data);
+      form.elements.t.value = '';
+      refocusInline = m.id;
+      toast(`Added “${text}”`, { undo: true });
     } else if (kind === 'drive-import') {
       const fresh = driveFound.filter((p) => !drive.existing(p));
       const picks = [...form.querySelectorAll('input[name=pick]:checked')].map((x) => Number(x.value));

@@ -515,3 +515,31 @@ body.scrolled .topbar { transform: none; }
 .peek-chips { margin: 0; }
 .peek .spec { background: var(--bg); }
 .sheet-card { transition: transform 0.12s ease-out; }
+
+/* ── flow: room switcher (phone) and split view (laptop) ─────────────── */
+.room-switch { display: flex; gap: 6px; overflow-x: auto; margin: 0 -20px 4px; padding: 2px 20px 10px; scrollbar-width: none; position: relative; z-index: 2; }
+.room-switch::-webkit-scrollbar { display: none; }
+.room-switch a { flex-shrink: 0; display: inline-flex; align-items: center; gap: 7px; min-height: 36px; padding: 0 13px; border-radius: 999px; border: 1px solid var(--line-2); background: var(--surface); font-size: 13px; color: var(--text-2); }
+.room-switch a.on { background: var(--text); color: var(--bg); border-color: var(--text); font-weight: 600; }
+.room-switch + .room-head { margin-top: 0; padding-top: 12px; }
+
+@media (min-width: 1000px) {
+  main.is-split { max-width: 1240px; padding-top: 24px; }
+  .split { display: grid; grid-template-columns: minmax(360px, 440px) minmax(0, 1fr); gap: 36px; align-items: start; }
+  .pane-list, .pane-detail { position: sticky; top: 16px; max-height: calc(100vh - 110px); overflow-y: auto; padding-right: 6px; scrollbar-width: thin; }
+  .pane-list .room-head { margin: 0 0 16px; padding: 4px 16px 18px; border-radius: var(--radius); }
+  .pane-list .room-switch { margin: 0 0 12px; padding: 0 0 8px; flex-wrap: wrap; }
+  .pane-detail { padding-left: 36px; border-left: 1px solid var(--line); }
+  .pane-detail .item-head { margin: 0 0 16px; padding: 4px 18px 10px; border-radius: var(--radius); }
+  .pane-detail .top-meta .backlink { visibility: hidden; }
+  .pane-detail .action-bar { bottom: 0; }
+  .pane-empty { display: flex; align-items: center; justify-content: center; min-height: 50vh; color: var(--muted); text-align: center; border: 1px dashed var(--line-2); border-radius: var(--radius); }
+  .pane-list .row.sel, .pane-list a.sel { background: var(--surface); border-radius: 14px; margin: 0 -10px; padding-left: 10px; padding-right: 10px; }
+  .pane-list .row:hover { background: color-mix(in srgb, var(--surface) 60%, transparent); border-radius: 14px; margin: 0 -10px; padding-left: 10px; padding-right: 10px; }
+}
+
+/* one-line add */
+.inline-add { display: flex; align-items: center; gap: 10px; min-height: 48px; margin: 0 0 14px; padding: 0 14px; border-radius: 14px; border: 1px dashed var(--line-2); color: var(--muted); }
+.inline-add:focus-within { border-style: solid; border-color: var(--accent-text); color: var(--accent-text); }
+.inline-add input { flex: 1; min-width: 0; border: 0; background: transparent; color: var(--text); font: inherit; font-size: 16px; outline: none; }
+.coll .inline-add { margin: 6px 0 4px; min-height: 44px; }
