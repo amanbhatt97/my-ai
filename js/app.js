@@ -1150,7 +1150,8 @@ function jobTimeline(r) {
   if (r.data.appliedOn) ev.push({ date: r.data.appliedOn, status: 'applied', text: 'Applied', href: '' });
   for (const em of r.data.emails || []) ev.push({ date: em.date, status: em.status || '', text: em.subject, href: gmail.mailLink(em.threadId) });
   if (!ev.length) return '';
-  ev.sort((a, b) => a.date.localeCompare(b.date) || (a.href ? 1 : -1));
+  // newest first
+  ev.sort((a, b) => b.date.localeCompare(a.date) || (a.href ? -1 : 1));
   // drop the plain "Applied" row if an application email covers the same day
   const rows = ev.filter((e, i) => !(e.text === 'Applied' && ev.some((x, j) => j !== i && x.status === 'applied' && x.date === e.date)));
   return `<section class="block"><span class="label">Timeline</span><ol class="jt">${rows.map((e) => `<li class="jt-${esc(e.status)}">
