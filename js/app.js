@@ -241,24 +241,68 @@ function header(title, { kicker = '', back = '', actions = '' } = {}) {
   const parent = currentCrumbs[currentCrumbs.length - 1];
   const backHref = back || (parent ? (parent.href || hrefOf(parent)) : '');
   return `<header class="top">
-    ${crumbs}
+    ${crumbs ? `<div class="top-meta">${crumbs}${actions ? `<div class="top-actions">${actions}</div>` : ''}</div>` : ''}
     <div class="top-row">
       ${backHref ? `<a class="icon-btn" href="${backHref}" aria-label="Back">${icon('back')}</a>` : ''}
       <div class="top-title">${kicker ? `<span class="kicker">${esc(kicker)}</span>` : ''}<h1>${esc(title)}</h1></div>
-      <div class="top-actions">${actions}</div>
+      ${crumbs ? '' : `<div class="top-actions">${actions}</div>`}
     </div>
   </header>`;
 }
 
-function row(r, { showModule = false } = {}) {
+// Nearest reminder dates for an item (countdowns).
+function countdownsOf(r) {
   const m = MODULE[r.module];
-  const meta = [];
-  if (m.status && r.data[m.status]) meta.push(r.data[m.status]);
-  if (showModule) meta.push(m.name);
-  if (m.sort && r.data[m.sort]) meta.push(m.fields.find((x) => x.k === m.sort)?.type === 'date' ? fmtDay(r.data[m.sort]) : r.data[m.sort]);
-  return `<a class="row ${isDone(r) ? 'done' : ''}" href="#/r/${r.id}">
-    <span class="row-title">${esc(r.module === 'journal' ? (r.data.text || 'Voice entry').slice(0, 90) : titleOf(r))}</span>
-    <span class="row-meta">${esc(meta.join(' · '))}</span>
+  if (!m || isDone(r)) return [];
+  const t0 = startOfToday();
+  return m.fields.filter((fd) => fd.remind !== undefined && r.data[fd.k]).map((fd) => {
+    let d = parseDay(r.data[fd.k]);
+    if (fd.yearly) { d = new Date(t0.getFullYear(), d.getMonth(), d.getDate()); if (d < t0) d.setFullYear(d.getFullYear() + 1); }
+    return { fd, days: diffDays(d, t0) };
+  }).sort((a, b) => a.days - b.days);
+}
+
+const SUB_SKIP = new Set(['long', 'links', 'json', 'url', 'check', 'rating']);
+function subtitleOf(r) {
+  const m = MODULE[r.module];
+  const tk = typeof m.title === 'string' ? m.title : null;
+  const titleKeys = tk ? [tk] : ['company', 'role'];
+  const parts = [];
+  for (const fd of m.fields) {
+    if (parts.length >= 2) break;
+    if (fd.hidden || SUB_SKIP.has(fd.type) || titleKeys.includes(fd.k) || fd.k === m.status || fd.remind !== undefined) continue;
+    const v = r.data[fd.k];
+    if (isEmpty(v)) continue;
+    if (fd.type === 'money') parts.push(`₹${Number(v).toLocaleString('en-IN')}`);
+    else if (fd.type === 'date') parts.push(`${fd.label} ${fmtDay(v)}`);
+    else if (fd.type === 'tags') parts.push(v.slice(0, 3).join(', '));
+    else if (fd.type === 'secret4') parts.push(`•••• ${v}`);
+    else parts.push(String(v));
+  }
+  return parts.join(' · ');
+}
+
+function pillFor(r, { noStatus = false } = {}) {
+  const m = MODULE[r.module];
+  const cd = countdownsOf(r)[0];
+  if (cd && cd.days <= Math.max(cd.fd.remind || 0, 30)) {
+    const cls = cd.days < 0 ? 'late' : cd.days <= (cd.fd.remind || 0) ? 'soon' : '';
+    const txt = cd.days < 0 ? `${-cd.days}d late` : cd.days === 0 ? 'today' : `${cd.days}d`;
+    return `<span class="pill ${cls}" title="${esc(cd.fd.label)}">${esc(txt)}</span>`;
+  }
+  if (!noStatus && m.status && r.data[m.status]) return `<span class="pill ghost">${esc(r.data[m.status])}</span>`;
+  if (m.sort && r.data[m.sort]) return `<span class="row-meta">${esc(m.fields.find((x) => x.k === m.sort)?.type === 'date' ? fmtDay(r.data[m.sort]) : r.data[m.sort])}</span>`;
+  return '';
+}
+
+function row(r, { showModule = false, noStatus = false } = {}) {
+  const m = MODULE[r.module];
+  const title = r.module === 'journal' ? (r.data.text || 'Voice entry').slice(0, 90) : titleOf(r);
+  const sub = [showModule ? m.name : '', r.module === 'journal' ? `${fmtDay(r.data.at)} ${fmtTime(r.data.at)}` : subtitleOf(r)].filter(Boolean).join(' · ');
+  return `<a class="row rich ${isDone(r) ? 'done' : ''}" href="#/r/${r.id}">
+    <span class="avatar" aria-hidden="true">${esc(title.trim().slice(0, 1).toUpperCase() || '·')}</span>
+    <span class="row-body"><span class="row-title">${esc(title)}</span>${sub ? `<span class="row-sub">${esc(sub)}</span>` : ''}</span>
+    ${pillFor(r, { noStatus })}
   </a>`;
 }
 
@@ -791,7 +835,7 @@ async function viewNode(id) {
       <span class="nc-top">${c.icon ? `<span class="nc-ico">${icon(c.icon, 20)}</span>` : `<span class="nc-ico ghost">${icon('dot', 20)}</span>`}${cn !== null ? `<span class="nc-n">${cn}</span>` : ''}</span>
       <span class="nc-name">${esc(c.name)}</span>
       ${sub.length ? `<span class="nc-sub mono">${sub.slice(0, 4).map((x) => esc(x.name)).join(' · ')}${sub.length > 4 ? ' …' : ''}</span>` : ''}
-      ${due ? `<span class="nc-due mono">${due} due soon</span>` : ''}
+      ${due ? `<span class="nc-due mono">${due} due soon</span>` : cn === 0 ? '<span class="nc-start mono">Start →</span>' : ''}
     </a>`;
   }).join('')}</div>`;
 }
@@ -812,7 +856,9 @@ function renderSide() {
 // ── MODULE LIST ─────────────────────────────────────────────────────────
 function sortRecords(m, list) {
   if (m.sort) return list.sort((a, b) => String(b.data[m.sort] || '').localeCompare(String(a.data[m.sort] || '')));
-  return list.sort((a, b) => (isDone(a) - isDone(b)) || b.updatedAt.localeCompare(a.updatedAt));
+  // soonest deadline first, then recently changed; done items last
+  const key = (r) => { const c = countdownsOf(r)[0]; return c ? c.days : 1e6; };
+  return list.sort((a, b) => (isDone(a) - isDone(b)) || (key(a) - key(b)) || b.updatedAt.localeCompare(a.updatedAt));
 }
 
 function listHtml(m, filter, q) {
@@ -820,7 +866,45 @@ function listHtml(m, filter, q) {
   if (filter && m.status) list = list.filter((r) => r.data[m.status] === filter);
   if (q) list = list.filter((r) => JSON.stringify(r.data).toLowerCase().includes(q.toLowerCase()));
   list = sortRecords(m, list);
-  return list.length ? list.map((r) => row(r)).join('') : '<p class="muted pad">Nothing here yet.</p>';
+  if (!list.length) return q || filter ? '<p class="muted pad">No matches.</p>' : '';
+  const sf = m.status && m.fields.find((x) => x.k === m.status);
+  if (sf && !filter && !q && list.length > 3) {
+    const groups = [...sf.options, ''].map((o) => [o, list.filter((r) => (r.data[m.status] || '') === o)]).filter(([, l]) => l.length);
+    return groups.map(([o, l]) => `<div class="group-head mono">${esc(o || 'no ' + sf.label.toLowerCase())} <span>${l.length}</span></div>${l.map((r) => row(r, { noStatus: true })).join('')}`).join('');
+  }
+  return list.map((r) => row(r, { noStatus: !!filter })).join('');
+}
+
+// What each section is for, shown when it's empty (setup lives in the tree).
+const HINTS = {
+  tasks: 'Anything you need to do. Give it a "when" (today, this week…) and optionally a due date.',
+  habits: 'Pick 3–5 habits. They become one-tap toggles on Today, with streaks.',
+  goals: 'Start with a few yearly goals, then break them into months and weeks.',
+  jobs: 'Every application: company, role, status, link, next follow-up. Gmail can fill this for you.',
+  documents: 'Passport, PAN, Aadhaar, licence, degrees. Store expiry, where the original is, and a scan link. Last 4 digits only.',
+  vehicles: 'Car or bike: insurance, PUC and service dates get reminders; note where the RC is.',
+  insurance: 'Health, term, vehicle policies: renewal date, cover, nominee.',
+  accounts: 'Banks, mutual funds, EPF, PPF, stocks: where they are and who the nominee is.',
+  loans: 'EMIs and credit cards: amount and due day.',
+  people: "People who matter: birthday, last contact, things to remember. Birthdays can go to Google Calendar.",
+  healthprofile: 'Blood group, allergies, conditions, vaccinations, check-up dates.',
+  possessions: 'Phone, laptop, appliances: warranty end date and invoice link.',
+  links: 'Profiles, finance logins, government portals: everything you open often.',
+  trips: 'Places you went, with dates, people, cost and a photo album link.',
+  subscriptions: 'Netflix, Spotify, cloud storage…: cost and renewal date.',
+  books: 'Books to read, reading, and done, with 3 takeaways each.',
+  emergency: 'Emergency contacts, blood group, what to do if you are hospitalised.',
+};
+
+function startCard(m) {
+  return `<section class="block start">
+    <span class="label">Start here</span>
+    <p class="start-text">${esc(HINTS[m.id] || `Nothing in ${m.name} yet.`)}</p>
+    <div class="form-actions">
+      ${m.id === 'links' ? '<button type="button" class="btn primary" data-action="starter-links">Add starter links</button>' : ''}
+      <a class="btn ${m.id === 'links' ? 'ghost' : 'primary'}" href="#/new/${m.id}">+ Add ${esc(m.name.toLowerCase().replace(/s$/, ''))}</a>
+    </div>
+  </section>`;
 }
 
 async function viewModule(id, filter = '') {
@@ -830,14 +914,14 @@ async function viewModule(id, filter = '') {
   const counts = {};
   if (statusField) for (const r of db.list(id)) counts[r.data[m.status]] = (counts[r.data[m.status]] || 0) + 1;
   return `${header(m.name, { kicker: plural(db.list(id).length, 'ITEM'), actions: `${id === 'jobs' ? '<a class="btn ghost small" href="#/inbox">Gmail</a>' : ''}<a class="btn primary small" href="#/new/${id}">+ New</a>` })}
-  <div class="toolbar">
+  ${db.list(id).length ? `<div class="toolbar">
     <label class="search-box">${icon('search', 16)}<input type="search" data-filter="${id}" data-status="${esc(filter)}" placeholder="Filter ${esc(m.name.toLowerCase())}" aria-label="Filter"></label>
-  </div>
+  </div>` : ''}
   ${statusField ? `<nav class="chips" aria-label="Status filter">
     <a href="#/m/${id}" class="chip ${!filter ? 'on' : ''}">all</a>
     ${statusField.options.filter((o) => counts[o]).map((o) => `<a href="#/m/${id}/${encodeURIComponent(o)}" class="chip ${filter === o ? 'on' : ''}">${esc(o)} · ${counts[o]}</a>`).join('')}
   </nav>` : ''}
-  <div class="list" id="list">${listHtml(m, filter, '')}</div>`;
+  ${db.list(id).length ? `<div class="list" id="list">${listHtml(m, filter, '')}</div>` : startCard(m)}`;
 }
 
 // ── FORMS ───────────────────────────────────────────────────────────────
