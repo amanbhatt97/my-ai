@@ -973,7 +973,7 @@ function statusText(s) {
     pending: 'Waiting to transcribe…',
     transcribing: 'Transcribing…',
     failed: 'Transcription failed. Open to retry.',
-    'no-transcriber': 'Voice note saved. Set up transcription in Settings to get text.',
+    'no-transcriber': 'Audio note. Play it below, or type what you said.',
   }[s] || '';
 }
 
@@ -1628,7 +1628,7 @@ function journalExtras(r) {
   return `<section class="block">
     ${audio ? `<div class="audio">${audio}</div>` : ''}
     ${st ? `<p class="muted small">${esc(st)}</p>` : ''}
-    ${['failed', 'no-transcriber', 'pending'].includes(d.status) && (d.audio || []).length ? `<button type="button" class="btn ghost small" data-action="retry" data-id="${r.id}">Retry transcription</button>` : ''}
+    ${['failed', 'pending'].includes(d.status) && (d.audio || []).length ? `<button type="button" class="btn ghost small" data-action="retry" data-id="${r.id}">Retry transcription</button>` : ''}
     ${tasks ? `<span class="label">Suggested tasks</span><ul class="suggest">${tasks}</ul>` : ''}
   </section>`;
 }
@@ -1687,7 +1687,6 @@ async function viewTrash() {
 // ── SETTINGS ────────────────────────────────────────────────────────────
 async function viewSettings() {
   const s = await db.kvGet('sync');
-  const voice = (await db.kvGet('voice')) || {};
   const device = await db.kvGet('device', '');
   const last = await db.kvGet('lastSync');
   const theme = getTheme();
@@ -1722,7 +1721,6 @@ async function viewSettings() {
     <form class="form" data-form="gmail">
       <div class="field"><label for="g-client">Google OAuth client ID</label><input id="g-client" name="clientId" value="${esc(gm.clientId || '')}" placeholder="1234-abc.apps.googleusercontent.com" autocomplete="off"></div>
       <div class="field"><label for="g-days">First scan looks back (days)</label><input id="g-days" name="firstDays" type="number" min="7" max="730" value="${esc(gm.firstDays || 90)}"></div>
-      <div class="field check"><input id="g-ai" name="ai" type="checkbox" ${gm.ai ? 'checked' : ''}><label for="g-ai">Use AI through my Worker for better company and role detection (sends sender, subject and preview of matching emails)</label></div>
       <div class="form-actions"><button class="btn primary" type="submit">Save</button><button class="btn ghost" type="button" data-action="gmail-reset">Rescan from scratch</button></div>
     </form>
     <p class="small muted">If the Google popup doesn't open (for example in the iPhone home-screen app), the app switches to Google's sign-in page instead. For that, add this exact address under <b>Authorized redirect URIs</b> in your Google OAuth client:</p>
@@ -1735,17 +1733,6 @@ async function viewSettings() {
       <div class="field check"><input id="c-bday" name="birthdays" type="checkbox" ${gc.birthdays ? 'checked' : ''}><label for="c-bday">Add birthdays and anniversaries as yearly events</label></div>
       <div class="field check"><input id="c-dead" name="deadlines" type="checkbox" ${gc.deadlines ? 'checked' : ''}><label for="c-dead">Add renewals and expiries (insurance, PUC, passport, warranty, subscriptions, maintenance…)</label></div>
       <div class="form-actions"><button class="btn ghost" type="submit">Save</button><button class="btn primary" type="button" data-action="gcal-connect">Connect & add existing dates</button></div>
-    </form>
-  </section>
-
-  <section class="block">
-    <span class="label">AI Worker (optional, advanced)</span>
-    <p class="small muted">You don't need this. Speaking into the journal, search and Brief me all work without it, for free. Fill this in only if you set up your own Cloudflare Worker with paid Claude/Sarvam keys for AI answers in Ask. Leave it empty otherwise.</p>
-    <form class="form" data-form="voice">
-      <div class="field"><label for="v-url">Worker URL</label><input id="v-url" name="url" type="url" value="${esc(voice.url || '')}" placeholder="https://life-voice.yourname.workers.dev"></div>
-      <div class="field"><label for="v-token">App token</label><input id="v-token" name="token" type="password" value="${esc(voice.token || '')}" autocomplete="off"></div>
-      <div class="field check"><input id="v-clean" name="cleanup" type="checkbox" ${voice.cleanup !== false ? 'checked' : ''}><label for="v-clean">Clean up into readable Hinglish and suggest mood, people and tasks</label></div>
-      <div class="form-actions"><button class="btn primary" type="submit">Save</button></div>
     </form>
   </section>
 
@@ -1899,13 +1886,7 @@ async function openAsk(question) {
   sheet.classList.add('open');
   const aEl = sheet.querySelector('.ask-a');
   const sEl = sheet.querySelector('.ask-src');
-  try {
-    const { answer, sources } = await assistant.ask(q);
-    if (seq !== askSeq) return;
-    aEl.innerHTML = esc(answer).replace(/\n/g, '<br>');
-    if (sources.length) sEl.innerHTML = `<div class="list">${sources.map((id) => row(db.get(id), { showModule: true })).join('')}</div>`;
-  } catch (err) {
-    if (seq !== askSeq) return;
+  {
     if (q === BRIEF_Q) { const b = localBrief(); aEl.innerHTML = b.html; if (b.ids.length) sEl.innerHTML = `<div class="list">${b.ids.slice(0, 5).map((id) => row(db.get(id), { showModule: true })).join('')}</div>`; return; }
     // no assistant (or offline): fall back to what plain search can find
     const words = q.toLowerCase().replace(/[?]/g, '').split(/\W+/).filter((w) => w.length >= 3 && !/^(what|when|where|which|does|have|kya|kab|kaun|kahan|mera|meri|mere|the|and|for|this|that|with|from|about|tell|show)$/.test(w));
@@ -1913,10 +1894,7 @@ async function openAsk(question) {
       const hay = (titleOf(r) + ' ' + JSON.stringify(r.data)).toLowerCase();
       return [words.filter((w) => hay.includes(w)).length, r];
     }).filter(([n]) => n).sort((a, b) => b[0] - a[0]).slice(0, 5).map(([, r]) => r);
-    const why = err.code === 'not-configured'
-      ? `The assistant isn’t switched on yet. Add your Worker in <a href="#/settings" data-action="close-sheet">Settings → Voice &amp; assistant</a>.`
-      : navigator.onLine === false ? 'You’re offline, so I can only search.' : `The assistant didn’t answer (${esc(err.message)}).`;
-    aEl.innerHTML = `<span class="muted">${why}${hits.length ? ' Closest matches:' : ''}</span>`;
+    aEl.innerHTML = hits.length ? `<span class="muted">Here's what matches in your records:</span>` : `<span class="muted">Nothing in your records matches that yet.</span>`;
     if (hits.length) sEl.innerHTML = `<div class="list">${hits.map((r) => row(r, { showModule: true })).join('')}</div>`;
   }
 }
@@ -2045,7 +2023,7 @@ async function stopRecorder(save) {
   closeSheet();
   if (!result.segments.length) { toast('Nothing was recorded.'); return; }
   await saveRecording(result, kind);
-  toast('Saved. Transcribing…', { undo: true });
+  toast('Audio saved to journal', { undo: true });
   if (currentRoute.name !== 'journal') go('#/journal');
 }
 
@@ -2154,7 +2132,7 @@ document.addEventListener('click', async (e) => {
       el.disabled = true;
       const status = $('#scan-status');
       try {
-        const r = await gmail.scan({ useAi: !!gm.ai, onProgress: (m) => { if (status) status.textContent = m; } });
+        const r = await gmail.scan({ useAi: false, onProgress: (m) => { if (status) status.textContent = m; } });
         toast(r.added ? `${r.added} new suggestion${r.added === 1 ? '' : 's'}` : `Checked ${r.scanned} emails. Nothing new.`);
       } catch (err) {
         toast(err.message || 'Scan failed');
@@ -2535,7 +2513,7 @@ document.addEventListener('submit', async (e) => {
       toast('Saved');
     } else if (kind === 'gmail') {
       const fd = new FormData(form);
-      await db.kvSet('gmail', { clientId: String(fd.get('clientId') || '').trim(), firstDays: Number(fd.get('firstDays')) || 90, ai: form.elements.ai.checked });
+      await db.kvSet('gmail', { clientId: String(fd.get('clientId') || '').trim(), firstDays: Number(fd.get('firstDays')) || 90 });
       await google.prepare();
       toast('Saved');
     } else if (kind === 'device') {

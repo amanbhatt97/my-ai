@@ -96,7 +96,8 @@ export async function saveRecording({ segments, durationSec }, kind) {
 }
 
 export async function transcribe(id) {
-  const cfg = await db.kvGet('voice', null);
+  // audio-only notes stay as audio: live dictation (dictate.js) is how speech becomes text now
+  const cfg = null;
   const rec = db.get(id);
   if (!rec) return;
   if (!cfg || !cfg.url) {
