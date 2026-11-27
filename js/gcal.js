@@ -188,16 +188,40 @@ export async function addTaskEvent(id) {
   const t = db.get(id);
   if (!t) return null;
   const date = t.data.due || new Date(Date.now() - new Date().getTimezoneOffset() * 6e4).toISOString().slice(0, 10);
+  const time = /^\d{2}:\d{2}$/.test(t.data.time || '') ? t.data.time : '';
+  let start; let end; let reminders;
+  if (time) {
+    // a timed event in this device's time zone; one hour unless a duration was given
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const [y, mo, d] = date.split('-').map(Number);
+    const [h, mi] = time.split(':').map(Number);
+    const s0 = new Date(y, mo - 1, d, h, mi);
+    const e0 = new Date(s0.getTime() + (Number(t.data.durationMin) || 60) * 6e4);
+    const local = (x) => `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}T${String(x.getHours()).padStart(2, '0')}:${String(x.getMinutes()).padStart(2, '0')}:00`;
+    start = { dateTime: local(s0), timeZone: tz }; end = { dateTime: local(e0), timeZone: tz };
+    reminders = { useDefault: false, overrides: [{ method: 'popup', minutes: 10 }] };
+  } else {
+    start = { date }; end = { date: nextDay(date) };
+    reminders = { useDefault: false, overrides: [{ method: 'popup', minutes: 0 }] };
+  }
   const body = {
     summary: t.data.title,
-    description: `Task from your AI Assistant: ${location.origin}${location.pathname}#/r/${t.id}${t.data.notes ? `\n\n${t.data.notes}` : ''}`,
-    start: { date }, end: { date: nextDay(date) },
-    reminders: { useDefault: false, overrides: [{ method: 'popup', minutes: 0 }] },
+    description: `From your AI Assistant: ${location.origin}${location.pathname}#/r/${t.id}${t.data.notes ? `\n\n${t.data.notes}` : ''}`,
+    start, end, reminders,
     extendedProperties: { private: { lifeId: t.id, lifeField: 'task' } },
   };
   let ev = null;
   if (t.data.gcalEvent?.id) ev = await api(`/events/${t.data.gcalEvent.id}`, { method: 'PUT', body: JSON.stringify(body) });
   if (!ev) ev = await api('/events', { method: 'POST', body: JSON.stringify(body) });
-  await db.update(id, { gcalEvent: { id: ev.id, link: ev.htmlLink || '', date } }, { silentUndo: true });
+  await db.update(id, { gcalEvent: { id: ev.id, link: ev.htmlLink || '', date, time }, gcalPending: false }, { silentUndo: true });
   return ev;
+}
+
+// Events made while signed out or offline: send them now.
+export async function flushTaskEvents() {
+  let n = 0;
+  for (const t of db.list('tasks')) {
+    if (t.data.gcalPending && t.data.status !== 'done') { try { if (await addTaskEvent(t.id)) n++; } catch (e) { if (e.code === 'auth') throw e; } }
+  }
+  return n;
 }

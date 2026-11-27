@@ -49,6 +49,8 @@ const I = {
   now: '<path d="M12 3v3M12 18v3M3 12h3M18 12h3"/><circle cx="12" cy="12" r="4"/>',
   plan: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="0.5"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
+  'arrow-ne': '<path d="M7 17 17 7M9 7h8v8"/>',
+  cal: '<rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M8 3v4M16 3v4"/>',
   mail: '<rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="m4 7 8 6 8-6"/>',
   spark: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 16l.7 1.8 1.8.7-1.8.7L19 21l-.7-1.8-1.8-.7 1.8-.7z"/>',
   mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>',
@@ -79,13 +81,13 @@ const I = {
 };
 
 // ── theme ───────────────────────────────────────────────────────────────
-function getTheme() { try { return localStorage.getItem('theme') || 'system'; } catch { return 'system'; } }
+function getTheme() { try { return localStorage.getItem('theme') || 'dark'; } catch { return 'dark'; } }
 function applyTheme(t) {
   try { localStorage.setItem('theme', t); } catch { /* private mode */ }
   if (t === 'system') document.documentElement.removeAttribute('data-theme');
   else document.documentElement.setAttribute('data-theme', t);
   const light = t === 'light' || (t === 'system' && matchMedia('(prefers-color-scheme: light)').matches);
-  document.querySelector('meta[name="theme-color"]').setAttribute('content', light ? '#f7f8fa' : '#0b0c11');
+  document.querySelector('meta[name="theme-color"]').setAttribute('content', light ? '#f6f7f9' : '#07080b');
 }
 
 // ── time progress (day / week / year) ──────────────────────────────────
@@ -244,6 +246,7 @@ async function render() {
   const top = tabFor(currentRoute);
   for (const a of document.querySelectorAll('.nav a, .side a[data-nav]')) a.classList.toggle('on', a.dataset.nav === top);
   renderSide();
+  if (refocusHomeAdd) { refocusHomeAdd = false; $('#home-add-t')?.focus({ preventScroll: true }); }
   if (refocusInline) { document.querySelector(`form.inline-add[data-module="${refocusInline}"] input`)?.focus({ preventScroll: true }); refocusInline = ''; }
   document.querySelector('.room-switch a.on')?.scrollIntoView({ inline: 'center', block: 'nearest' });
   if (split && currentRoute.name === 'r') {
@@ -483,97 +486,161 @@ function areaCard(room, i, open) {
   </div>`;
 }
 
+// one big number per area for the Home boxes: [number, what it means]
+function roomBig(room) {
+  const t0 = startOfToday();
+  const late = roomReminders(room).filter((x) => x.days < 0);
+  const short = (n) => (n >= 1e7 ? `₹${(n / 1e7).toFixed(1)}Cr` : n >= 1e5 ? `₹${(n / 1e5).toFixed(1)}L` : n >= 1e3 ? `₹${(n / 1e3).toFixed(0)}k` : `₹${Math.round(n)}`);
+  switch (room.id) {
+    case 'career': { const n = db.list('jobs').filter((j) => !isDone(j) && j.data.status !== 'to apply').length; return [String(n), n === 1 ? 'active application' : 'active applications']; }
+    case 'money': { const v = sumOf('accounts', 'value'); return v ? [short(v), 'invested'] : [String(db.list('loans').length), 'loans tracked']; }
+    case 'health': {
+      const moods = db.list('days').filter((r) => r.data.mood && diffDays(t0, parseDay(r.data.date)) < 30).map((r) => Number(r.data.mood));
+      if (moods.length) return [(moods.reduce((x, y) => x + y, 0) / moods.length).toFixed(1), 'avg mood · 30 days'];
+      return [String(db.list('medical').length), 'medical records'];
+    }
+    case 'people': {
+      const next = db.list('people').filter((p) => p.data.birthday).map((p) => { const b = parseDay(p.data.birthday); const d = new Date(t0.getFullYear(), b.getMonth(), b.getDate()); if (d < t0) d.setFullYear(d.getFullYear() + 1); return { p, days: diffDays(d, t0) }; }).sort((x, y) => x.days - y.days)[0];
+      if (next) return [next.days === 0 ? 'Today' : `${next.days}d`, `to ${next.p.data.name}’s birthday`];
+      return [String(db.list('people').length), 'people'];
+    }
+    case 'home': {
+      if (late.length) return [String(late.length), `overdue: ${titleOf(late[0].r)}`];
+      const next = roomReminders(room).find((x) => x.days >= 0);
+      if (next) return [`${next.days}d`, `${titleOf(next.r)} · ${next.label.toLowerCase()}`];
+      return [String(db.list('vehicles').length + db.list('documents').length + db.list('possessions').length), 'things tracked'];
+    }
+    case 'learning': { const n = db.list('books').filter((x) => x.data.status === 'reading').length; return n ? [String(n), n === 1 ? 'book reading' : 'books reading'] : [String(db.list('books').length + db.list('courses').length), 'books & courses']; }
+    case 'travel': { const n = new Set(db.list('trips').map((x) => (x.data.country || x.data.place || '').trim()).filter(Boolean)).size; return [String(n), n === 1 ? 'place visited' : 'places visited']; }
+    default: {
+      const m = {};
+      for (const r of db.list('journal')) { const k = (r.data.at || '').slice(0, 10); if (k) m[k] = 1; }
+      let st = 0; const d = new Date(t0); if (!m[dayKey(d)]) d.setDate(d.getDate() - 1); while (m[dayKey(d)]) { st++; d.setDate(d.getDate() - 1); }
+      return st ? [String(st), st === 1 ? 'day journal streak' : 'day journal streak'] : [String(db.list('journal').length), 'journal entries'];
+    }
+  }
+}
+
+function whenLabel(due, t0) {
+  if (!due) return 'TODAY';
+  const d = diffDays(parseDay(due), t0);
+  if (d < 0) return `${-d}D LATE`;
+  if (d === 0) return 'TODAY';
+  if (d === 1) return 'TOMORROW';
+  return parseDay(due).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' }).toUpperCase();
+}
+
 async function viewNow() {
   const t = todayStr();
   const now = new Date();
   const t0 = startOfToday();
-  const tasks = db.list('tasks')
-    .filter((r) => r.data.status !== 'done' && (r.data.status === 'today' || (r.data.due && r.data.due <= t)))
-    .sort((a, b) => (a.data.due || '9').localeCompare(b.data.due || '9'));
-  const habits = db.list('habits').filter((r) => r.data.active !== false);
-  const dayRec = db.list('days').find((r) => r.data.date === t);
-  const mood = dayRec?.data.mood;
+  const soon = new Date(t0); soon.setDate(soon.getDate() + 2);
+  const soonStr = dayKey(soon);
+  const allTasks = db.list('tasks');
+  const open = allTasks.filter((r) => r.data.status !== 'done' && (r.data.status === 'today' || (r.data.due && r.data.due <= soonStr)));
+  const doneToday = allTasks.filter((r) => r.data.status === 'done' && r.data.completedOn === t);
   const rems = reminders().filter((x) => x.r.module !== 'tasks');
   const overdue = rems.filter((x) => x.days < 0);
   const dueToday = rems.filter((x) => x.days === 0);
-  const cal = await gcal.cachedEvents();
-  const todayEvents = cal.events.filter((e) => (e.start || '').slice(0, 10) === t);
-  const lateTasks = tasks.filter((r) => r.data.due && r.data.due < t);
-  const left = tasks.length - lateTasks.length + dueToday.length;
+  const lateTasks = open.filter((r) => r.data.due && r.data.due < t);
+  const todayTasks = open.filter((r) => !r.data.due || r.data.due <= t);
+  const left = todayTasks.length - lateTasks.length + dueToday.length;
   const lateN = overdue.length + lateTasks.length;
-  const journaledToday = db.list('journal').some((r) => (r.data.at || '').startsWith(t));
+  const habits = db.list('habits').filter((r) => r.data.active !== false);
+  const cal = await gcal.cachedEvents();
+  const setUp = !!(await google.clientId());
+  const connected = autosync.connected();
 
-  let headline;
-  if (!left && !lateN) headline = `All clear.<br><span class="soft">${todayEvents.length ? `${plural(todayEvents.length, 'event')} on your calendar.` : 'Nothing due today.'}</span>`;
-  else headline = `${left ? `${plural(left, 'thing')} left` : 'Nothing else due'}${lateN ? `<br><span class="soft">and ${lateN} overdue.</span>` : '<br><span class="soft">You’re on track.</span>'}`;
+  const headline = !left && !lateN
+    ? `All clear. <span class="soft">Nothing due today.</span>`
+    : `${left ? `${plural(left, 'thing')} today.` : 'Nothing else today.'} <span class="soft">${lateN ? `${lateN} overdue.` : 'You’re on track.'}</span>`;
 
-  // timeline: late → anytime → timed events → night
-  const items = [];
-  for (const x of overdue) items.push({ o: 0, html: `<li><span class="when late">Late</span><span class="dot" style="--c:${colorOf(x.r.module)}"></span><a class="what" href="#/r/${x.r.id}"><span>${esc(titleOf(x.r))}</span><small>${esc(x.label)} · ${rel(x.days)}</small></a></li>` });
-  for (const r of lateTasks) items.push({ o: 0, html: `<li><span class="when late">Late</span><button type="button" class="tick" data-action="task-done" data-id="${r.id}" aria-label="Mark ${esc(titleOf(r))} done">${icon('check', 14)}</button><a class="what" href="#/r/${r.id}"><span>${esc(titleOf(r))}</span><small>due ${rel(diffDays(parseDay(r.data.due), t0))}</small></a></li>` });
-  for (const x of dueToday) items.push({ o: 1, html: `<li><span class="when strong">Today</span><span class="dot" style="--c:${colorOf(x.r.module)}"></span><a class="what" href="#/r/${x.r.id}"><span>${esc(titleOf(x.r))}</span><small>${esc(x.label)}</small></a></li>` });
-  for (const r of tasks.filter((x) => !lateTasks.includes(x))) items.push({ o: 1, html: `<li><span class="when">Any</span><button type="button" class="tick" data-action="task-done" data-id="${r.id}" aria-label="Mark ${esc(titleOf(r))} done">${icon('check', 14)}</button><a class="what" href="#/r/${r.id}"><span>${esc(titleOf(r))}</span></a></li>` });
-  if (!journaledToday) items.push({ o: 3, html: `<li><span class="when">Night</span><span class="dot"></span><span class="what"><span>Journal: how did today go?</span></span><button type="button" class="link" data-action="record">Speak</button></li>` });
-  items.sort((a, b) => a.o - b.o || String(a.k || '').localeCompare(String(b.k || '')));
+  // things to do: overdue reminders, then tasks (late first), then what you ticked off today
+  const rows = [];
+  for (const x of [...overdue, ...dueToday]) {
+    const room = roomOf(x.r.module);
+    rows.push({ k: `0${x.days}`, html: `<li class="td-row">
+      <a class="td-ring" href="#/r/${x.r.id}" aria-label="Open ${esc(titleOf(x.r))}"></a>
+      <a class="td-main" href="#/r/${x.r.id}"><span class="td-title">${esc(titleOf(x.r))} · ${esc(x.label.toLowerCase())}</span><span class="td-meta"><span class="${x.days < 0 ? 'late-t' : ''}">${x.days < 0 ? `${-x.days}D LATE` : 'TODAY'}</span><i>/</i>${esc(room ? room.name : MODULE[x.r.module].name)}</span></a>
+      <span class="td-dot" style="--c:${colorOf(x.r.module)}"></span></li>` });
+  }
+  const taskRow = (r, done) => {
+    const src = r.data.gcalEvent && r.data.time ? 'Google Calendar' : r.data.gtask ? 'Google Tasks' : r.data.fromEvent ? 'Calendar' : r.data.gcalPending ? 'Calendar · waiting' : r.data.gtaskPending ? 'Google Tasks · waiting' : 'Tasks';
+    const w = r.data.time && (!r.data.due || r.data.due === t) ? r.data.time : r.data.time ? `${whenLabel(r.data.due, t0)} ${r.data.time}` : whenLabel(r.data.due, t0);
+    return `<li class="td-row ${done ? 'done' : ''}">
+      <button type="button" class="td-check" data-action="task-toggle" data-id="${r.id}" aria-pressed="${done}" aria-label="${done ? 'Mark not done' : 'Mark done'}: ${esc(titleOf(r))}">${done ? icon('check', 13) : ''}</button>
+      <a class="td-main" href="#/r/${r.id}"><span class="td-title">${esc(titleOf(r))}</span><span class="td-meta"><span class="${w.endsWith('LATE') && !done ? 'late-t' : ''}">${done ? 'DONE' : w}</span><i>/</i>${esc(src)}</span></a>
+      <span class="td-dot" style="--c:${(ROOM[r.data.area] && ROOM[r.data.area].color) || 'var(--accent)'}"></span></li>`;
+  };
+  for (const r of open.sort((a, b) => `${a.data.due || t} ${a.data.time || '99'}`.localeCompare(`${b.data.due || t} ${b.data.time || '99'}`))) rows.push({ k: `1${r.data.due || t}`, html: taskRow(r, false) });
+  for (const r of doneToday) rows.push({ k: '9', html: taskRow(r, true) });
+  const openCount = allTasks.filter((r) => r.data.status !== 'done').length;
 
-  const coming = [
-    ...rems.filter((x) => x.days > 0 && x.days <= 21).map((x) => ({ days: x.days, html: `<li><a href="#/r/${x.r.id}"><span class="l"><span class="dot" style="--c:${colorOf(x.r.module)}"></span><span>${esc(titleOf(x.r))} · ${esc(x.label)}</span></span><span class="r">${rel(x.days)}</span></a></li>` })),
-  ].sort((a, b) => a.days - b.days).slice(0, 5);
+  // calendar: next two events still to come
+  const nowIso = new Date().toISOString();
+  const upcoming = (cal.events || []).filter((e) => !e.mine && ((e.allDay && (e.start || '') >= t) || (!e.allDay && (e.end || e.start || '') >= nowIso))).slice(0, 2);
+  const evCard = (e) => {
+    const day = (e.start || '').slice(0, 10);
+    const dd = diffDays(parseDay(day), t0);
+    const time = e.allDay ? 'All day' : new Date(e.start).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false });
+    return `<a class="ev-card" href="${esc(e.link || '#')}" target="_blank" rel="noopener"><b>${esc(time)}</b><span>${esc(e.title)}</span><em>${dd === 0 ? 'TODAY' : dd === 1 ? 'TOMORROW' : esc(fmtDay(day).toUpperCase())}</em></a>`;
+  };
+  const calBlock = !setUp ? '' : !connected && !cal.at
+    ? `<button type="button" class="ev-connect" data-action="google-connect">${icon('cal', 18)}<span><b>Connect Google</b><em>Calendar, Tasks, Gmail and Drive, in one tap</em></span>${icon('chev', 16)}</button>`
+    : upcoming.length ? `<div class="ev-grid">${upcoming.map(evCard).join('')}</div>` : '<p class="muted small">Nothing coming up on your calendar.</p>';
 
+  const brief = localBrief();
   const mailCount = (await gmail.suggestions()).length;
   gmailCount = mailCount;
-  const nudge = (await nudges())[0];
-  const setupLeft = SETUP.length - SETUP.filter(setupDone).length;
-  let hint = '';
-  if (mailCount) hint = `<a class="hint-card" href="#/inbox"><span class="dot" style="--c:#7AA2FF"></span><span class="t"><b>${plural(mailCount, 'job update')} from Gmail</b><span>Review and add to your applications</span></span>${icon('chev', 16)}</a>`;
-  else if (setupLeft >= 5) hint = `<a class="hint-card" href="#/setup"><span class="dot"></span><span class="t"><b>Finish setting up · ${SETUP.length - setupLeft}/${SETUP.length}</b><span>Next: ${esc(SETUP.find((x) => !setupDone(x)).title)}</span></span>${icon('chev', 16)}</a>`;
-  else if (nudge) hint = `<div class="hint-card"><span class="dot"></span><span class="t"><b>${esc(nudge.text)}</b></span>${nudge.href ? `<a class="btn small" href="${esc(nudge.href)}">${esc(nudge.cta)}</a>` : `<button type="button" class="btn small" data-action="${nudge.action}"${nudge.id ? ` data-id="${nudge.id}"` : ''}>${esc(nudge.cta)}</button>`}<button type="button" class="icon-btn sm" data-action="nudge-dismiss" data-key="${esc(nudge.key)}" aria-label="Hide for today">×</button></div>`;
-
   const habitsDone = habits.filter((h) => (h.data.log || {})[t]).length;
-  const setUp = !!(await google.clientId());
-  // today's calendar events join the same list
-  for (const e of todayEvents.filter((x) => !x.mine)) {
-    const time = e.allDay ? 'All day' : new Date(e.start).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false });
-    items.push({ o: 2, k: e.start, html: `<li><span class="when strong">${esc(time)}</span><span class="dot" style="--c:#FF3B30"></span><a class="what" href="${esc(e.link || '#')}" target="_blank" rel="noopener"><span>${esc(e.title)}</span></a></li>` });
-  }
-  items.sort((a, b) => a.o - b.o || String(a.k || '').localeCompare(String(b.k || '')));
-  const openAreas = new Set(lsGet('openAreas', []));
-  const calCard = await calendarCard(cal, t);
-  const googleLink = setUp && !autosync.connected() ? '<button type="button" class="link" data-action="google-connect">Connect Google</button>' : '';
+
+  const tile = (room, i) => {
+    const [big, fact] = roomBig(room);
+    const late = roomReminders(room).some((x) => x.days < 0);
+    return `<a class="big-tile" href="#/room/${room.id}" style="--c:${room.color}">
+      <span class="bt-head"><span class="bt-num">${String(i + 1).padStart(2, '0')}</span>${icon('arrow-ne', 16)}</span>
+      <span class="bt-body"><b>${esc(big)}</b><span class="${late ? 'late-t' : ''}">${esc(fact)}</span><strong><i class="bt-dot"></i>${esc(room.name)}</strong></span>
+    </a>`;
+  };
+
   return `<header class="top home-top">
-    <div class="kicker">${esc(now.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' }))}</div>
+    <div class="kicker">${esc(now.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' }).toUpperCase())}</div>
     <h1>${headline}</h1>
   </header>
 
-  <div class="home-grid"><div class="home-main">
-  <section class="block home-today" aria-label="Today">
-    <div class="label-row"><span class="label">Today</span>${googleLink}</div>
-    <div class="list">${items.length ? `<ul class="tl">${items.map((i) => i.html).join('')}</ul>` : '<p class="muted pad">Nothing due today.</p>'}</div>
-  </section>
+  <div class="home-cols">
+    <section class="block todo" aria-label="Things to do">
+      <div class="label-row"><span class="label">Things to do</span>${setUp ? `<span class="sync-chip"><i></i>${connected ? 'Google Tasks · Calendar' : 'Google not connected'}</span>` : ''}</div>
+      <div class="todo-card">
+        <form class="todo-add" data-form="home-add" autocomplete="off">
+          <span class="td-plus" aria-hidden="true">+</span>
+          <label class="sr-only" for="home-add-t">New task</label>
+          <input id="home-add-t" name="t" type="text" placeholder="Add a task… press Enter" enterkeyhint="done">
+        </form>
+        ${rows.length ? `<ul class="td-list">${rows.map((x) => x.html).join('')}</ul>` : '<p class="td-empty">Nothing to do today. Add something above.</p>'}
+        <a class="td-all" href="#/m/tasks"><span>All tasks · ${openCount} open</span>${icon('chev', 14)}</a>
+      </div>
+    </section>
 
-  ${habits.length ? `<section class="block" aria-label="Habits">
-    <div class="label-row"><span class="label">Habits</span><span class="small muted">${habitsDone} of ${habits.length} today</span></div>
-    <div class="habit-row-simple">${habits.map((h) => {
-      const on = !!(h.data.log || {})[t];
-      const st = streak(h.data.log || {});
-      return `<button type="button" class="ring-btn ${on ? 'on' : ''}" data-action="habit" data-id="${h.id}" aria-pressed="${on}" aria-label="${esc(h.data.name)}"><i>${on ? icon('check', 16) : st || ''}</i><span>${esc(h.data.name)}</span></button>`;
-    }).join('')}</div>
-  </section>` : ''}
+    <div class="home-side">
+      ${setUp ? `<section class="block" aria-label="Calendar"><div class="label-row"><span class="label">Next on calendar</span>${connected ? '<button type="button" class="link" data-action="google-sync">Sync</button>' : ''}</div>${calBlock}</section>` : ''}
+      <section class="block brief-card" aria-label="This week"><span class="label">This week</span><p>${brief.html}</p></section>
+      ${mailCount ? `<a class="hint-card" href="#/inbox"><span class="dot" style="--c:var(--accent)"></span><span class="t"><b>${plural(mailCount, 'job update')} from Gmail</b><span>Review and add to your applications</span></span>${icon('chev', 16)}</a>` : ''}
+      ${habits.length ? `<section class="block" aria-label="Habits">
+        <div class="label-row"><span class="label">Habits</span><span class="small muted">${habitsDone} of ${habits.length} today</span></div>
+        <div class="habit-row-simple">${habits.map((h) => {
+          const on = !!(h.data.log || {})[t];
+          const st = streak(h.data.log || {});
+          return `<button type="button" class="ring-btn ${on ? 'on' : ''}" data-action="habit" data-id="${h.id}" aria-pressed="${on}" aria-label="${esc(h.data.name)}"><i>${on ? icon('check', 16) : st || ''}</i><span>${esc(h.data.name)}</span></button>`;
+        }).join('')}</div>
+      </section>` : ''}
+    </div>
+  </div>
 
-  </div><aside class="home-rail">
-  ${hint ? `<section class="block">${hint}</section>` : ''}
-  ${calCard}
-  ${coming.length ? `<section class="block" aria-label="Coming up"><span class="label">Next 3 weeks</span><div class="list"><ul class="simple">${coming.map((c) => c.html).join('')}</ul></div></section>` : ''}
-  </aside></div>
-
-  <section class="block" aria-label="Areas">
-    <div class="label-row"><span class="label">Everything you track</span><span class="small muted">Tap to open</span></div>
-    <div class="areas">${ROOMS.map((room, i) => areaCard(room, i, openAreas.has(room.id))).join('')}</div>
-  </section>
-
-  <nav class="home-links" aria-label="More">
-    <button type="button" class="link" data-action="ask-brief">Brief me</button><a href="#/plan">Plan</a><a href="#/journal">Journal</a><a href="#/progress">Progress</a><a href="#/setup">Set up</a><a href="#/settings">Settings</a>
-  </nav>`;
+  <section class="block" aria-label="Everything you track">
+    <div class="label-row"><span class="label">Everything you track</span><span class="label">${String(ROOMS.length).padStart(2, '0')}</span></div>
+    <div class="big-tiles">${ROOMS.map(tile).join('')}</div>
+  </section>`;
 }
 
 // ── suggestions: small nudges based on what's in the app ───────────────
@@ -1280,6 +1347,7 @@ function renderSide() {
     </div>`;
 }
 let gmailCount = 0;
+let refocusHomeAdd = false;
 function clearCapture() {
   const inp = document.querySelector('form.capture input'); if (inp) { inp.value = ''; inp.blur(); }
   const box = $('#capture-results'); if (box) { box.hidden = true; box.innerHTML = ''; }
@@ -1764,29 +1832,71 @@ function parseWhen(text) {
   const iso = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   const add = (n) => { const d = new Date(t0); d.setDate(d.getDate() + n); return d; };
   const days = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+  let rest = text;
+  // time: "5pm", "5:30 pm", "at 17:30", "noon"
+  let time = '';
+  let m = rest.match(/\b(?:at\s+)?(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm)\b/i);
+  if (m) { let h = Number(m[1]) % 12; if (m[3].toLowerCase() === 'pm') h += 12; time = `${pad(h)}:${m[2] || '00'}`; }
+  else if ((m = rest.match(/\b(?:at\s+)?([01]?\d|2[0-3])[:.]([0-5]\d)\b/))) time = `${pad(Number(m[1]))}:${m[2]}`;
+  else if ((m = rest.match(/\b(?:at\s+)?noon\b/i))) time = '12:00';
+  if (time && m) rest = rest.replace(m[0], ' ');
+  // duration: "for 30 min", "for 2 hours"
+  let durationMin = 0;
+  const dm = rest.match(/\bfor\s+(\d{1,3})\s*(min|mins|minutes|m|h|hr|hrs|hour|hours)\b/i);
+  if (dm) { durationMin = Number(dm[1]) * (/^h/i.test(dm[2]) ? 60 : 1); rest = rest.replace(dm[0], ' '); }
   const rules = [
     [/\b(today|tonight)\b/i, () => add(0)],
-    [/\btomorrow\b/i, () => add(1)],
     [/\bday after tomorrow\b/i, () => add(2)],
+    [/\btomorrow\b/i, () => add(1)],
     [/\bnext week\b/i, () => add(7)],
-    [/\bin (\d{1,3}) days?\b/i, (m) => add(Number(m[1]))],
-    [/\b(?:on |by |this )?(sun|mon|tue|wed|thu|fri|sat)[a-z]*\b/i, (m) => { const want = days.indexOf(m[1].toLowerCase()); let n = (want - t0.getDay() + 7) % 7; if (n === 0) n = 7; return add(n); }],
+    [/\bin (\d{1,3}) days?\b/i, (x) => add(Number(x[1]))],
+    [/\b(?:on |by |this )?(sun|mon|tue|wed|thu|fri|sat)[a-z]*\b/i, (x) => { const want = days.indexOf(x[1].toLowerCase()); let n = (want - t0.getDay() + 7) % 7; if (n === 0) n = 7; return add(n); }],
   ];
+  let d = null;
   for (const [re, fn] of rules) {
-    const m = text.match(re);
-    if (m) {
-      const d = fn(m);
-      const title = text.replace(m[0], '').replace(/\s{2,}/g, ' ').replace(/^[\s,.-]+|[\s,.-]+$/g, '');
-      return { title: title || text, due: iso(d), days: diffDays(d, t0) };
-    }
+    const x = rest.match(re);
+    if (x) { d = fn(x); rest = rest.replace(x[0], ' '); break; }
   }
-  return { title: text, due: '', days: null };
+  if (time && !d) {
+    // a time with no day: today, or tomorrow if that time has already passed
+    const [h, mi] = time.split(':').map(Number);
+    const at = new Date(t0); at.setHours(h, mi);
+    d = at < new Date() ? add(1) : add(0);
+  }
+  const title = rest.replace(/\s{2,}/g, ' ').replace(/^[\s,.-]+|[\s,.-]+$/g, '') || text;
+  if (!d) return { title: text, due: '', days: null, time: '', durationMin: 0 };
+  return { title, due: iso(d), days: diffDays(d, t0), time, durationMin };
+}
+
+// Send a new task to Google: with a time → Calendar event, without → Google Tasks. Queued if not signed in.
+async function sendToGoogle(rec) {
+  if (!google.isSetUp() || !rec) return '';
+  try {
+    if (rec.data.time) {
+      if (!google.hasToken(google.SCOPES.calendar)) { await db.update(rec.id, { gcalPending: true }, { silentUndo: true }); return ' · goes to Google Calendar at next sync'; }
+      await gcal.addTaskEvent(rec.id);
+      return ' · on Google Calendar';
+    }
+    return (await gtasks.pushNew(rec.id)) ? ' · in Google Tasks' : ' · goes to Google Tasks at next sync';
+  } catch (err) {
+    await db.update(rec.id, rec.data.time ? { gcalPending: true } : { gtaskPending: true }, { silentUndo: true });
+    return ' · Google will retry at next sync';
+  }
+}
+
+function taskFromText(raw) {
+  const w = parseWhen(raw);
+  const data = { title: w.due ? w.title : raw, status: 'today' };
+  if (w.due) { data.due = w.due; data.status = w.days <= 0 ? 'today' : w.days <= 7 ? 'this week' : 'later'; }
+  if (w.time) { data.time = w.time; if (w.durationMin) data.durationMin = w.durationMin; }
+  return { data, w };
 }
 
 function openQuickAdd(preset = 'tasks', text = '') {
   const sheet = $('#sheet'); sheet.classList.remove('is-peek');
   const when = text ? parseWhen(text) : { title: '', due: '' };
-  if (when.due) text = when.title;
+  if (when.due && !when.time) text = when.title; // keep "5pm" in the text so it's saved as a timed event
+  const hasGoogle = google.isSetUp();
   sheet.innerHTML = `<div class="sheet-card" role="dialog" aria-modal="true" aria-label="Quick add">
     <div class="grab"></div>
     <form data-form="quick">
@@ -1797,7 +1907,7 @@ function openQuickAdd(preset = 'tasks', text = '') {
         <input type="date" name="due" value="${esc(when.due || '')}" aria-label="Due date">
         <button type="button" class="link" data-action="clear-due">Clear</button>
       </div>
-      <label class="field check q-cal"><input type="checkbox" name="toCal"><span>Also add to Google Calendar</span></label>
+      <p class="q-sync small muted" ${preset === 'tasks' && hasGoogle ? '' : 'hidden'}>${icon('cal', 14)} Saved to Google Tasks automatically. Add a time (like “5pm” or “17:30”) and it goes on Google Calendar instead.</p>
       <div class="chips" role="radiogroup" aria-label="Type">
         ${QUICK.map((id) => `<label class="chip-radio"><input type="radio" name="module" value="${id}" ${id === preset ? 'checked' : ''}><span>${esc(MODULE[id].name.replace('Job applications', 'Job'))}</span></label>`).join('')}
         <a class="chip" href="#/life" data-action="close-sheet">More…</a>
@@ -1809,6 +1919,15 @@ function openQuickAdd(preset = 'tasks', text = '') {
     </form>
   </div>`;
   sheet.classList.add('open');
+  const hintEl = sheet.querySelector('.q-sync');
+  const updateHint = () => {
+    if (!hintEl) return;
+    const w = parseWhen($('#q-text')?.value || '');
+    hintEl.innerHTML = `${icon('cal', 14)} ${w.time ? `Goes on Google Calendar · ${esc(fmtDay(w.due))}, ${esc(w.time)}${w.durationMin ? ` for ${w.durationMin} min` : ''}` : `Goes to Google Tasks${w.due ? ` · due ${esc(fmtDay(w.due))}` : ''}. Add a time (like “5pm”) to put it on Google Calendar instead.`}`;
+  };
+  $('#q-text')?.addEventListener('input', updateHint);
+  updateHint();
+  for (const r of sheet.querySelectorAll('input[name="module"]')) r.addEventListener('change', () => { const box = sheet.querySelector('.q-sync'); if (box) box.hidden = r.value !== 'tasks' || !r.checked || !hasGoogle; });
   setTimeout(() => $('#q-text')?.focus(), 50);
 }
 function openRenew(id, k) {
@@ -2075,6 +2194,21 @@ document.addEventListener('click', async (e) => {
       const label = await db.undo();
       toast(label ? `${label}: undone` : 'Nothing to undo');
       render();
+      break;
+    }
+    case 'task-toggle': {
+      const r = db.get(id); if (!r) break;
+      const done = r.data.status === 'done';
+      if (done) {
+        const due = r.data.due;
+        const status = !due || due <= todayStr() ? 'today' : diffDays(parseDay(due), startOfToday()) <= 7 ? 'this week' : 'later';
+        await db.update(id, { status, completedOn: '' });
+        gtasks.reopenIfLinked(id);
+      } else {
+        await db.update(id, { status: 'done', completedOn: todayStr() });
+        gtasks.completeIfLinked(id);
+        toast('Done', { undo: true });
+      }
       break;
     }
     case 'task-done': {
@@ -2441,11 +2575,16 @@ document.addEventListener('submit', async (e) => {
       if (missing.length) { toast(`Fill in: ${missing.join(', ')}`); return; }
       if (kind === 'new') {
         const rec = await db.create(m.id, data);
+        if (m.id === 'tasks') sendToGoogle(rec);
         toast('Saved', { undo: true });
         location.replace(`#/r/${rec.id}`);
       } else {
         await db.update(form.dataset.id, data);
         formDirty = false;
+        if (m.id === 'tasks' && google.isSetUp()) {
+          const cur = db.get(form.dataset.id);
+          if (cur.data.time && cur.data.status !== 'done' && (!cur.data.gcalEvent || cur.data.gcalEvent.time !== cur.data.time || cur.data.gcalEvent.date !== cur.data.due)) sendToGoogle(cur);
+        }
         toast('Saved', { undo: true });
         if (location.hash === `#/r/${form.dataset.id}`) render(); else location.hash = `#/r/${form.dataset.id}`;
       }
@@ -2458,6 +2597,15 @@ document.addEventListener('submit', async (e) => {
       form.elements.q.blur();
       if (assistant.isQuestion(q)) { openAsk(q); return; }
       openQuickAdd('tasks', q);
+    } else if (kind === 'home-add') {
+      const raw = form.elements.t.value.trim();
+      if (!raw) return;
+      const { data, w } = taskFromText(raw);
+      form.elements.t.value = '';
+      const rec = await db.create('tasks', data);
+      refocusHomeAdd = true;
+      const where = await sendToGoogle(rec);
+      toast(`${data.time ? 'Event' : 'Task'} added${data.due ? ` · ${data.time ? `${rel(w.days)} ${data.time}` : `due ${rel(w.days)}`}` : ''}${where}`, { undo: true });
     } else if (kind === 'ask') {
       const q = form.elements.q.value.trim();
       if (q) openAsk(q);
@@ -2518,7 +2666,9 @@ document.addEventListener('submit', async (e) => {
       if (id === 'journal') Object.assign(data, { at: localStamp(), text, status: 'typed' });
       else data[titleKey(m)] = text;
       if (id === 'tasks') {
-        const due = form.elements.due?.value || '';
+        const parsed = parseWhen(text);
+        if (parsed.due) { data[titleKey(m)] = parsed.title; if (parsed.time) { data.time = parsed.time; if (parsed.durationMin) data.durationMin = parsed.durationMin; } }
+        const due = form.elements.due?.value || parsed.due || '';
         if (due) {
           data.due = due;
           const dd = diffDays(parseDay(due), startOfToday());
@@ -2527,11 +2677,9 @@ document.addEventListener('submit', async (e) => {
       }
       const rec = await db.create(id, data);
       closeSheet();
-      if (id === 'tasks' && form.elements.toCal?.checked) {
-        if (!google.hasToken(google.SCOPES.calendar)) toast('Task saved. Tap Connect Google on Home, then use "Add to Calendar".');
-        else { try { await gcal.addTaskEvent(rec.id); } catch (err) { toast(err.message || 'Calendar failed'); } }
-      }
-      toast(id === 'tasks' && data.due ? `Task added · due ${rel(diffDays(parseDay(data.due), startOfToday()))}` : `Added to ${m.name}`, { undo: true });
+      let where = '';
+      if (id === 'tasks') where = await sendToGoogle(rec);
+      toast(id === 'tasks' ? `${data.time ? 'Event' : 'Task'} added${data.due ? ` · ${data.time ? `${fmtDay(data.due)} ${data.time}` : `due ${rel(diffDays(parseDay(data.due), startOfToday()))}`}` : ''}${where}` : `Added to ${m.name}`, { undo: true });
       if (!['tasks', 'journal', 'ideas'].includes(id)) go(`#/r/${rec.id}`);
     } else if (kind === 'sync') {
       const fd = Object.fromEntries(new FormData(form));

@@ -28,13 +28,13 @@ export async function run({ onlyIfStale = false } = {}) {
   running = true;
   const out = { events: 0, tasks: 0, jobs: 0, places: 0, errors: [] };
   try {
-    try { out.events = (await gcal.refreshEvents()).length; await gcal.flush(); } catch (e) { out.errors.push(`Calendar: ${e.message}`); }
+    try { await gcal.flushTaskEvents(); out.events = (await gcal.refreshEvents()).length; await gcal.flush(); } catch (e) { out.errors.push(`Calendar: ${e.message}`); }
     if (google.hasToken(google.SCOPES.tasks)) {
       try { out.tasks = (await gtasks.sync()).added; } catch (e) { out.errors.push(`Tasks: ${e.message}`); }
     }
     if (google.hasToken(google.SCOPES.gmail)) {
       try {
-        await gmail.scan({ useAi: !!((await db.kvGet('gmail')) || {}).ai });
+        await gmail.scan({ useAi: false });
         // clear-cut updates go straight in; unclear ones stay for review
         for (const s of await gmail.suggestions()) {
           if (s.company && s.status && !/^unknown/i.test(s.company)) { await gmail.accept(s.msgId); out.jobs++; }

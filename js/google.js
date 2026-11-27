@@ -78,6 +78,7 @@ export async function prepare() {
 const isIosStandalone = () => /iphone|ipad|ipod/i.test(navigator.userAgent) && (navigator.standalone || matchMedia('(display-mode: standalone)').matches);
 // always the app's folder address, however the page was opened (…/my-ai/, …/my-ai/index.html)
 export const redirectUri = () => location.origin + location.pathname.replace(/index\.html$/, '').replace(/([^/])$/, '$1/');
+export const isSetUp = () => !!readyId;
 export const signInMode = () => (isIosStandalone() ? 'redirect' : 'popup');
 export function tokenInfo() { const t = load(); return t ? { scopes: t.scopes || [], expiresIn: Math.round((t.expiry - Date.now()) / 60000) } : null; }
 export function storedError() { try { return lastError || sessionStorage.getItem('google-last-error') || ''; } catch { return lastError; } }

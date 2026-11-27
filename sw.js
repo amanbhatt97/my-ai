@@ -1,5 +1,5 @@
 // Offline support: the app shell is cached; API calls always go to the network.
-const CACHE = 'life-v40';
+const CACHE = 'life-v42';
 const SHELL = [
   './', './index.html', './css/app.css', './manifest.webmanifest', './icon.svg', './icon-180.png', './icon-192.png',
   './js/app.js', './js/db.js', './js/sync.js', './js/crypto.js', './js/schemas.js', './js/journal.js', './js/gmail.js', './js/gcal.js', './js/google.js', './js/rooms.js', './js/drive.js', './js/gtasks.js', './js/autosync.js', './js/ask.js', './js/dictate.js',

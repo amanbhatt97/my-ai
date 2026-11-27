@@ -43,7 +43,8 @@ export const MODULES = [
     fields: [
       f('title', 'Task', 'text', { req: true }),
       f('status', 'When', 'select', { options: ['inbox', 'today', 'this week', 'later', 'done'], def: 'today' }),
-      area, f('due', 'Due', 'date', { remind: 1 }), notes,
+      area, f('due', 'Due', 'date', { remind: 1 }), f('time', 'Time', 'text', { ph: '17:30 (puts it on Google Calendar)' }), notes,
+      f('durationMin', 'Duration (minutes)', 'number', { hidden: true }),
     ],
   },
   {
